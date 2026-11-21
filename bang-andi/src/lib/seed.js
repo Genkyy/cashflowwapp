@@ -3,20 +3,38 @@ import { subDays, addDays } from 'date-fns';
 import { db } from './db.js';
 import { COMMODITIES } from '../constants/commodities.js';
 
+let isSeeding = false;
+let seedPromise = null;
+
 /**
  * Seeds the Dexie database with realistic commodity management data
  * if the database is currently empty.
+ * Guarded against React StrictMode concurrent execution to prevent duplicate records.
  */
 export async function seedDatabase(force = false) {
-  const existingCommodities = await db.commodities.count();
-  if (existingCommodities > 0 && !force) {
+  if (seedPromise && !force) {
+    return seedPromise;
+  }
+  if (isSeeding && !force) {
     return false;
   }
 
-  if (force) {
-    await db.delete();
-    await db.open();
-  }
+  isSeeding = true;
+  seedPromise = (async () => {
+    try {
+      const [existingCommodities, existingTransactions] = await Promise.all([
+        db.commodities.count(),
+        db.transactions.count()
+      ]);
+
+      if ((existingCommodities > 0 || existingTransactions > 0) && !force) {
+        return false;
+      }
+
+      if (force) {
+        await db.delete();
+        await db.open();
+      }
 
   const now = new Date();
   const dateT1 = subDays(now, 5); // 15 Nov
@@ -504,7 +522,150 @@ export async function seedDatabase(force = false) {
     },
   });
 
-  return true;
+  // 10. Operational Notes (F5.4 To-Do List)
+  const existingNotes = await db.operational_notes.count();
+  if (existingNotes === 0) {
+    await db.operational_notes.bulkAdd([
+      {
+        title: 'Kirim susu ke Bu Ani jam 6 pagi',
+        description: 'Pengantaran 20 liter susu sapi segar',
+        category: 'Susu',
+        priority: 'high',
+        date: now.toISOString(),
+        is_completed: 0,
+        created_at: now.toISOString(),
+      },
+      {
+        title: 'Jadwal vaksin Sapi LMS-003',
+        description: 'Vaksinasi berkala oleh dokter dinas peternakan',
+        category: 'Sapi',
+        priority: 'medium',
+        date: addDays(now, 5).toISOString(),
+        is_completed: 0,
+        created_at: now.toISOString(),
+      },
+      {
+        title: 'Restok Minyak dari supplier Pak Joko',
+        description: 'Pemesanan 200 liter minyak curah',
+        category: 'Minyak',
+        priority: 'low',
+        date: subDays(now, 2).toISOString(),
+        is_completed: 1,
+        created_at: subDays(now, 3).toISOString(),
+      },
+      {
+        title: 'Pembersihan kandang domba garut',
+        description: 'Sanitasi kandang dan penggantian pakan rumput',
+        category: 'Domba',
+        priority: 'low',
+        date: subDays(now, 1).toISOString(),
+        is_completed: 1,
+        created_at: subDays(now, 2).toISOString(),
+      },
+      {
+        title: 'Pengecekan kualitas telur ayam rak A',
+        description: 'Sortir telur retak saat bongkar muat pagi',
+        category: 'Telur',
+        priority: 'medium',
+        date: subDays(now, 3).toISOString(),
+        is_completed: 1,
+        created_at: subDays(now, 4).toISOString(),
+      },
+    ]);
+  }
+
+  // 11. Proyek Rotasi Modal (CV Amanah Barokah Real Business Logic)
+  const existingRotations = await db.capital_rotations.count();
+  if (existingRotations === 0) {
+    await db.capital_rotations.bulkAdd([
+      {
+        project_name: 'Pengadaan Minyak Sunco Batch #01',
+        commodity: 'Minyak Sunco',
+        capital_amount: 50000000,
+        profit_amount: 4000000,
+        roi_percentage: 8.0,
+        status: 'done',
+        start_date: subDays(now, 20).toISOString(),
+        completion_date: subDays(now, 12).toISOString(),
+        proof_url: '',
+        notes: 'Pencairan lancar via transfer BCA. Bruto 3.500L, Netto 3.480L.',
+        created_at: subDays(now, 20).toISOString(),
+      },
+      {
+        project_name: 'Distribusi Minyak Kita Karton Batch #02',
+        commodity: 'Minyak Kita',
+        capital_amount: 35000000,
+        profit_amount: 2800000,
+        roi_percentage: 8.0,
+        status: 'done',
+        start_date: subDays(now, 15).toISOString(),
+        completion_date: subDays(now, 7).toISOString(),
+        proof_url: '',
+        notes: 'Pengiriman toko ritel mitra. Bruto 2.500 pouch.',
+        created_at: subDays(now, 15).toISOString(),
+      },
+      {
+        project_name: 'Pengadaan Susu MBG Tahap 1',
+        commodity: 'Susu MBG',
+        capital_amount: 25000000,
+        profit_amount: 2000000,
+        roi_percentage: 8.0,
+        status: 'done',
+        start_date: subDays(now, 10).toISOString(),
+        completion_date: subDays(now, 3).toISOString(),
+        proof_url: '',
+        notes: 'Program gizi MBG termin 1 cair tepat waktu.',
+        created_at: subDays(now, 10).toISOString(),
+      },
+      {
+        project_name: 'Pengadaan Susu MBG Tahap 2',
+        commodity: 'Susu MBG',
+        capital_amount: 30000000,
+        profit_amount: 2400000,
+        roi_percentage: 8.0,
+        status: 'waiting',
+        start_date: subDays(now, 3).toISOString(),
+        completion_date: null,
+        proof_url: '',
+        notes: 'Modal di lapangan, estimasi pencairan akhir pekan ini.',
+        created_at: subDays(now, 3).toISOString(),
+      },
+      {
+        project_name: 'Pasokan Telur Ayam Sentra Mandiri',
+        commodity: 'Telur',
+        capital_amount: 15000000,
+        profit_amount: 1200000,
+        roi_percentage: 8.0,
+        status: 'waiting',
+        start_date: subDays(now, 2).toISOString(),
+        completion_date: null,
+        proof_url: '',
+        notes: 'Margin tetap 8%. Kirim ke 3 cabang agen.',
+        created_at: subDays(now, 2).toISOString(),
+      },
+      {
+        project_name: 'Penggemukan Domba Mitra Barokah',
+        commodity: 'Domba',
+        capital_amount: 40000000,
+        profit_amount: 4400000,
+        roi_percentage: 11.0,
+        status: 'done',
+        start_date: subDays(now, 30).toISOString(),
+        completion_date: subDays(now, 5).toISOString(),
+        proof_url: '',
+        notes: 'Batch penggemukan 20 ekor, panen bobot sehat.',
+        created_at: subDays(now, 30).toISOString(),
+      },
+    ]);
+  }
+
+      return true;
+    } finally {
+      isSeeding = false;
+    }
+  })();
+
+  return seedPromise;
 }
 
 export default seedDatabase;

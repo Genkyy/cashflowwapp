@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from './lib/store.js';
 import { useAuthStore } from './lib/authStore.js';
 import { seedDatabase } from './lib/seed.js';
@@ -26,13 +26,17 @@ export default function App() {
   const { activeTab } = useAppStore();
   const { initializeAuth } = useAuthStore();
   const [isSplashDone, setIsSplashDone] = useState(false);
+  const hasSeededRef = useRef(false);
 
   useEffect(() => {
     // 1. Initialize Supabase Auth in background
     initializeAuth();
 
-    // 2. Ensure initial seed data exists locally
-    seedDatabase().catch((e) => console.warn('Seed database warning:', e));
+    // 2. Ensure initial seed data exists locally (guarded against React StrictMode double invocation)
+    if (!hasSeededRef.current) {
+      hasSeededRef.current = true;
+      seedDatabase().catch((e) => console.warn('Seed database warning:', e));
+    }
 
     // 3. Setup Supabase Realtime synchronization across iPad and HP
     const cleanupRealtime = setupRealtimeSync();

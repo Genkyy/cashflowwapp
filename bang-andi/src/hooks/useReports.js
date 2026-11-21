@@ -76,21 +76,64 @@ export function useReports() {
       }
     }
 
+    // Fetch Capital Rotations (Proyek Rotasi Modal CV Amanah Barokah)
+    let rotQuery = db.capital_rotations ? await db.capital_rotations.toArray() : [];
+    let completedRotations = rotQuery.filter((r) => r.status === 'done');
+    let waitingRotations = rotQuery.filter((r) => r.status === 'waiting');
+
+    if (startDate) {
+      const startTime = new Date(startDate).getTime();
+      completedRotations = completedRotations.filter((r) => {
+        const d = new Date(r.completion_date || r.start_date || 0).getTime();
+        return d >= startTime;
+      });
+    }
+    if (endDate) {
+      const endTime = new Date(endDate).getTime();
+      completedRotations = completedRotations.filter((r) => {
+        const d = new Date(r.completion_date || r.start_date || 0).getTime();
+        return d <= endTime;
+      });
+    }
+
+    const rotationGrossProfit = completedRotations.reduce((sum, r) => sum + (Number(r.profit_amount) || 0), 0);
+    const rotationTotalCapital = completedRotations.reduce((sum, r) => sum + (Number(r.capital_amount) || 0), 0);
+    const waitingModalTotal = waitingRotations.reduce((sum, r) => sum + (Number(r.capital_amount) || 0), 0);
+
+    // Attribute rotation profits to commodity breakdown if matched
+    completedRotations.forEach((r) => {
+      const cName = (r.commodity || '').toLowerCase();
+      const matched = COMMODITIES.find((c) => cName.includes(c.name.toLowerCase()));
+      if (matched && commodityBreakdown[matched.id]) {
+        commodityBreakdown[matched.id].revenue += Number(r.profit_amount) || 0;
+        commodityBreakdown[matched.id].grossProfit += Number(r.profit_amount) || 0;
+      }
+    });
+
     // Finalize commodity net profit
     Object.values(commodityBreakdown).forEach((cb) => {
-      cb.grossProfit = cb.revenue - cb.cogs;
+      if (!cb.grossProfit) {
+        cb.grossProfit = cb.revenue - cb.cogs;
+      }
       cb.netProfit = cb.grossProfit - cb.expenses;
     });
 
-    const grossProfit = totalRevenue - totalCOGS;
+    // Laba Bruto Gabungan (Utama: Profit Rotasi Modal Cair + Laba Dagang Ritel)
+    const retailGrossProfit = Math.max(0, totalRevenue - totalCOGS);
+    const grossProfit = rotationGrossProfit > 0 ? (rotationGrossProfit + retailGrossProfit) : (totalRevenue - totalCOGS);
     const netProfit = grossProfit - totalOperationalExpenses;
 
     return {
       totalRevenue,
       totalCOGS,
-      grossProfit,
+      grossProfit, // Laba Bruto (Kotor)
+      rotationGrossProfit, // Realisasi Profit Rotasi Modal
+      rotationTotalCapital, // Total Modal Rotasi yang Sudah Cair
+      waitingModalTotal, // Total Modal yang Masih Berjalan
+      completedRotationsCount: completedRotations.length,
+      waitingRotationsCount: waitingRotations.length,
       totalOperationalExpenses,
-      netProfit,
+      netProfit, // Laba Netto (Bersih)
       expensesByCategory,
       commodityBreakdown: Object.values(commodityBreakdown),
       transactionCount: transactions.length,
@@ -165,14 +208,17 @@ export function useReports() {
   }, []);
 
   /**
-   * Outstanding Receivables (Piutang Usaha) with Aging analysis
+   * Outstanding Receivables (Piutang Usaha) with Aging analysis & Paid History
    */
   const getReceivables = useCallback(async () => {
-    const list = await db.transactions
+    const allIncome = await db.transactions
       .where('status')
       .notEqual('void')
-      .filter((t) => t.type === 'income' && t.payment_status !== 'paid')
+      .filter((t) => t.type === 'income')
       .toArray();
+
+    const list = allIncome.filter((t) => t.payment_status !== 'paid');
+    const paidList = allIncome.filter((t) => t.payment_status === 'paid');
 
     const contacts = await db.contacts.toArray();
     const contactMap = new Map(contacts.map((c) => [c.id, c]));
@@ -216,22 +262,36 @@ export function useReports() {
       };
     });
 
+    const enrichedPaidList = paidList.map((tx) => {
+      const contact = tx.contact_id ? contactMap.get(tx.contact_id) : null;
+      return {
+        ...tx,
+        remaining: 0,
+        contactName: contact ? contact.name : 'Umum',
+        contactPhone: contact ? contact.phone : '',
+      };
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
     return {
       totalReceivable,
       aging,
       list: enrichedList.sort((a, b) => b.remaining - a.remaining),
+      paidList: enrichedPaidList,
     };
   }, []);
 
   /**
-   * Outstanding Payables (Utang Usaha) with Aging analysis
+   * Outstanding Payables (Utang Usaha) with Aging analysis & Paid History
    */
   const getPayables = useCallback(async () => {
-    const list = await db.transactions
+    const allExpense = await db.transactions
       .where('status')
       .notEqual('void')
-      .filter((t) => t.type === 'expense' && t.payment_status !== 'paid')
+      .filter((t) => t.type === 'expense')
       .toArray();
+
+    const list = allExpense.filter((t) => t.payment_status !== 'paid');
+    const paidList = allExpense.filter((t) => t.payment_status === 'paid');
 
     const contacts = await db.contacts.toArray();
     const contactMap = new Map(contacts.map((c) => [c.id, c]));
@@ -275,10 +335,21 @@ export function useReports() {
       };
     });
 
+    const enrichedPaidList = paidList.map((tx) => {
+      const contact = tx.contact_id ? contactMap.get(tx.contact_id) : null;
+      return {
+        ...tx,
+        remaining: 0,
+        contactName: contact ? contact.name : 'Supplier',
+        contactPhone: contact ? contact.phone : '',
+      };
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
     return {
       totalPayable,
       aging,
       list: enrichedList.sort((a, b) => b.remaining - a.remaining),
+      paidList: enrichedPaidList,
     };
   }, []);
 

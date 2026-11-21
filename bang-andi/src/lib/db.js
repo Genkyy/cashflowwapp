@@ -22,6 +22,7 @@ export class BangAndiDatabase extends Dexie {
       operational_notes: '++id, date, category',
       audit_log: '++id, timestamp, action, entity_type, entity_id',
       app_settings: '++id, &key',
+      capital_rotations: '++id, project_name, commodity, status, start_date, completion_date, [status+start_date]',
     });
   }
 }

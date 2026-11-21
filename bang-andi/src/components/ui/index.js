@@ -5,5 +5,5 @@ export { Toast } from './Toast.jsx';
 export { EmptyState } from './EmptyState.jsx';
 export { ErrorState } from './ErrorState.jsx';
 export { CardList, CardListItem } from './CardList.jsx';
+export { LoadMoreButton } from './LoadMoreButton.jsx';
 export { default as SpendingBreakdownCard } from '../dashboard/SpendingBreakdownCard.jsx';
-

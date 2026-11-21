@@ -77,8 +77,20 @@ export default function DashboardView() {
   const items = useLiveQuery(() => db.items.toArray(), []);
   const batches = useLiveQuery(() => db.stock_batches.toArray(), []);
   const contacts = useLiveQuery(() => db.contacts.toArray(), []);
+  const capitalRotations = useLiveQuery(
+    () => (db.capital_rotations ? db.capital_rotations.toArray() : []),
+    []
+  );
 
   const isLoading = accounts === undefined || transactions === undefined || items === undefined;
+
+  // Capital rotation calculations (CV Amanah Barokah Waiting Capital in Field)
+  const waitingRotations = (capitalRotations || []).filter((r) => r.status === 'waiting');
+  const waitingRotationsCount = waitingRotations.length;
+  const waitingModalTotal = waitingRotations.reduce(
+    (sum, r) => sum + (Number(r.capital_amount) || 0),
+    0
+  );
 
   // 2. Calculations
   const totalBalance = (accounts || []).reduce(
@@ -149,7 +161,7 @@ export default function DashboardView() {
         };
       })
       .sort((a, b) => a.dueDateObj.getTime() - b.dueDateObj.getTime())
-      .slice(0, 4);
+      .slice(0, 5);
   }, [transactions, contactMap, now]);
 
   // Dynamic FlowMint Cashflow Curve Data (Smooth spline)
@@ -275,8 +287,8 @@ export default function DashboardView() {
               title="Notifikasi & Peringatan"
             >
               <Bell className="w-5 h-5 stroke-[2]" />
-              {(lowStockItems.length > 0 || expiringBatches.length > 0 || dueTransactions.length > 0) && (
-                <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-[#00D29E] ring-2 ring-white animate-pulse" />
+              {(waitingRotationsCount > 0 || lowStockItems.length > 0 || expiringBatches.length > 0 || dueTransactions.length > 0) && (
+                <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white animate-pulse" />
               )}
             </button>
 
@@ -288,6 +300,21 @@ export default function DashboardView() {
                   <span className="text-[11px] text-[#00D29E] font-semibold cursor-pointer" onClick={() => setShowBellNotification(false)}>Tutup</span>
                 </div>
                 <div className="space-y-2 text-xs">
+                  {waitingRotationsCount > 0 && (
+                    <div
+                      className="p-2.5 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 flex items-start gap-2 cursor-pointer hover:bg-amber-100/60 transition"
+                      onClick={() => {
+                        setShowBellNotification(false);
+                        setActiveTab('transactions');
+                      }}
+                    >
+                      <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="font-bold">Modal Lapangan (Waiting)</div>
+                        <div>{waitingRotationsCount} proyek rotasi senilai <strong>{formatCurrency(waitingModalTotal)}</strong> sedang berputar di lapangan.</div>
+                      </div>
+                    </div>
+                  )}
                   {lowStockItems.length > 0 && (
                     <div className="p-2.5 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 flex items-start gap-2">
                       <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -300,7 +327,7 @@ export default function DashboardView() {
                       <span>{dueTransactions.length} transaksi jatuh tempo terdekat memerlukan follow-up.</span>
                     </div>
                   )}
-                  {lowStockItems.length === 0 && dueTransactions.length === 0 && (
+                  {waitingRotationsCount === 0 && lowStockItems.length === 0 && dueTransactions.length === 0 && (
                     <div className="py-4 text-center text-slate-400">Tidak ada peringatan mendesak.</div>
                   )}
                 </div>
@@ -371,10 +398,21 @@ export default function DashboardView() {
                 {isBalanceHidden ? 'Rp ••••••••' : formatCurrency(totalBalance)}
               </div>
 
-              {/* Subtitle / Trend Badge */}
-              <div className="mt-2 flex items-center gap-1.5 text-xs font-bold text-[#00D29E]">
-                <span>↑ 6.4%</span>
-                <span className="text-slate-400 font-normal">vs last month</span>
+              {/* Subtitle / Trend Badge & Modal Berjalan Pill */}
+              <div className="mt-2.5 flex items-center gap-2.5 flex-wrap text-xs font-bold">
+                <div className="flex items-center gap-1.5 text-[#00D29E]">
+                  <span>↑ 6.4%</span>
+                  <span className="text-slate-400 font-normal">vs last month</span>
+                </div>
+                {waitingModalTotal > 0 && (
+                  <div
+                    onClick={() => setActiveTab('transactions')}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-300 text-xs font-bold cursor-pointer hover:bg-amber-400/30 transition"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    <span>Modal Berjalan: {formatCurrency(waitingModalTotal)} ({waitingRotationsCount} Proyek)</span>
+                  </div>
+                )}
               </div>
 
               {/* Fast Action Buttons row inside card */}
@@ -417,6 +455,40 @@ export default function DashboardView() {
               </div>
             </div>
           </div>
+
+          {/* CV AMANAH BAROKAH: MODAL BERJALAN (WAITING) NOTIFICATION BANNER */}
+          {waitingRotationsCount > 0 && (
+            <div
+              onClick={() => setActiveTab('transactions')}
+              className="bg-gradient-to-r from-amber-500/10 via-amber-400/15 to-emerald-500/10 border border-amber-300/80 rounded-3xl p-4 sm:p-5 flex items-center justify-between gap-4 cursor-pointer hover:border-amber-400 transition-all shadow-xs"
+            >
+              <div className="flex items-center gap-3.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Clock className="w-5 h-5 stroke-[2.5]" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                      Siklus Modal Lapangan ({waitingRotationsCount} Proyek)
+                    </span>
+                    <span className="text-xs text-amber-900/70 font-semibold hidden sm:inline">
+                      Status: Waiting
+                    </span>
+                  </div>
+                  <div className="text-lg sm:text-xl font-black text-[#071A24] tracking-tight tabular-nums mt-0.5">
+                    {formatCurrency(waitingModalTotal)}
+                  </div>
+                  <p className="text-xs text-slate-600 truncate">
+                    Total modal yang sedang berputar di lapangan (Susu MBG, Telur, Minyak, dll.)
+                  </p>
+                </div>
+              </div>
+              <div className="shrink-0 flex items-center gap-1.5 text-xs font-bold text-amber-900 bg-white/90 px-3.5 py-2 rounded-2xl border border-amber-200 hover:bg-white transition shadow-2xs">
+                <span>Lihat Proyek</span>
+                <ArrowUpRight className="w-4 h-4 text-amber-700" />
+              </div>
+            </div>
+          )}
 
           {/* 2. CASH FLOW INSIGHT CARD (FlowMint Smooth Spline Card) */}
           <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)]">
@@ -560,21 +632,25 @@ export default function DashboardView() {
             <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-base font-bold text-[#071A24] tracking-tight">
-                    Upcoming bills
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    <h3 className="text-base font-bold text-[#071A24] tracking-tight">
+                      Jatuh Tempo (5 Terdekat)
+                    </h3>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setActiveTab('transactions')}
-                    className="text-xs font-bold text-slate-500 hover:text-[#00D29E] transition cursor-pointer"
+                    onClick={() => setActiveTab('reports')}
+                    className="text-xs font-bold text-[#00D29E] hover:underline flex items-center gap-1 cursor-pointer"
                   >
-                    View all
+                    <span>Lihat Semua</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
 
                 <div className="space-y-3">
                   {dueTransactions.length > 0 ? (
-                    dueTransactions.map((item, idx) => (
+                    dueTransactions.slice(0, 5).map((item, idx) => (
                       <div
                         key={item.id || idx}
                         onClick={() => setActiveTab('transactions')}
@@ -688,7 +764,7 @@ export default function DashboardView() {
                         </div>
                         <span className="font-bold text-[#071A24] tabular-nums shrink-0">
                           {cat.value}%
-                        </span>
+                        </span> 
                       </div>
                     ))}
                   </div>
@@ -726,7 +802,7 @@ export default function DashboardView() {
                 onClick={() => setActiveTab('transactions')}
                 className="text-xs font-bold text-[#00D29E] hover:underline flex items-center gap-1 cursor-pointer"
               >
-                <span>Lihat Mutasi ({transactions?.length || 0})</span>
+                <span>Lihat Semua ({transactions?.length || 0})</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
             </div>

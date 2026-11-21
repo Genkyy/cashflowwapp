@@ -34,6 +34,8 @@ import { SkeletonCard, SkeletonTable } from '../ui/Skeleton.jsx';
 import EmptyState from '../ui/EmptyState.jsx';
 import BottomSheet from '../ui/BottomSheet.jsx';
 import Button from '../ui/Button.jsx';
+import LoadMoreButton from '../ui/LoadMoreButton.jsx';
+import usePagination from '../../hooks/usePagination.js';
 
 /**
  * FlowMint-style Stock & Commodities View
@@ -61,7 +63,7 @@ export default function StockView() {
   const [selectedCommodity, setSelectedCommodity] = useState('all');
   const [search, setSearch] = useState('');
   const [conditionFilter, setConditionFilter] = useState('all'); // all | warning | safe
-  const [showAllMutations, setShowAllMutations] = useState(false);
+  const [mutationPeriod, setMutationPeriod] = useState('this_month'); // this_month (Anti-Lag default) | all | last_30_days
 
   // 3. Adjustment Modal State
   const [adjustingItem, setAdjustingItem] = useState(null);
@@ -196,6 +198,37 @@ export default function StockView() {
       }
     }
   };
+
+  // Filtered Mutations with default 'Bulan Ini' (Anti-Lag)
+  const filteredMutations = useMemo(() => {
+    const list = (mutations || []).slice().reverse();
+    const now = new Date();
+    const curMonth = now.getMonth();
+    const curYear = now.getFullYear();
+
+    return list.filter((m) => {
+      if (mutationPeriod === 'this_month') {
+        const mDate = new Date(m.date);
+        if (mDate.getMonth() !== curMonth || mDate.getFullYear() !== curYear) return false;
+      } else if (mutationPeriod === 'last_30_days') {
+        const mDate = new Date(m.date);
+        const diffDays = (now.getTime() - mDate.getTime()) / (1000 * 3600 * 24);
+        if (diffDays > 30 || diffDays < 0) return false;
+      }
+      return true;
+    });
+  }, [mutations, mutationPeriod]);
+
+  // Anti-Lag Pagination: 20 items initial view, reset on period change
+  const {
+    displayedItems: paginatedMutations,
+    remainingCount: remainingMutations,
+    loadMore: loadMoreMutations,
+  } = usePagination(filteredMutations, {
+    initialLimit: 20,
+    step: 20,
+    resetDependencies: [mutationPeriod, activeTab],
+  });
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-6">
@@ -566,113 +599,142 @@ export default function StockView() {
       )}
 
       {/* =========================================================================
-          TAB 2: MUTATIONS HISTORY
+          TAB 2: MUTATIONS HISTORY (Anti-Lag Pagination & Default Bulan Ini)
          ========================================================================= */}
       {activeTab === 'mutations' && (
         <div className="space-y-4 animate-in fade-in duration-200">
+          {/* Period Filter Bar & Stats */}
+          <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#00D29E]" />
+                <h3 className="font-extrabold text-sm sm:text-base text-[#071A24]">
+                  Riwayat Mutasi Stok
+                </h3>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 tabular-nums">
+                  {filteredMutations.length} Catatan
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5 font-medium">
+                Log pergerakan barang masuk/keluar dari nota dan penyesuaian opname fisik.
+              </p>
+            </div>
+
+            {/* Smart Default Period Selector (Bulan Ini active by default) */}
+            <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-2xl self-start sm:self-center">
+              {[
+                { id: 'this_month', label: 'Bulan Ini' },
+                { id: 'last_30_days', label: '30 Hari' },
+                { id: 'all', label: 'Semua' },
+              ].map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setMutationPeriod(p.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                    mutationPeriod === p.id
+                      ? 'bg-[#071A24] text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {mutations === undefined ? (
             <div className="space-y-3">
               <SkeletonCard height="h-20" />
               <SkeletonCard height="h-20" />
             </div>
-          ) : (mutations || []).length === 0 ? (
+          ) : filteredMutations.length === 0 ? (
             <EmptyState
               icon={History}
-              title="Belum Ada Mutasi Stok"
-              description="Riwayat perubahan stok dari transaksi atau opname fisik akan otomatis tercatat di sini."
+              title="Belum Ada Mutasi Pada Periode Ini"
+              description={
+                mutationPeriod !== 'all'
+                  ? 'Tidak ada mutasi stok yang tercatat pada periode ini. Coba ubah filter ke "Semua".'
+                  : 'Riwayat perubahan stok dari transaksi atau opname fisik akan otomatis tercatat di sini.'
+              }
+              actionLabel={mutationPeriod !== 'all' ? 'Tampilkan Semua Periode' : undefined}
+              onAction={mutationPeriod !== 'all' ? () => setMutationPeriod('all') : undefined}
             />
           ) : (
             <div className="space-y-3">
-              <div className="flex items-center justify-between px-1">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#00D29E]" />
-                  <span className="text-xs font-bold text-[#071A24]">
-                    {showAllMutations ? 'Semua Catatan Mutasi' : '5 Mutasi Stok Terkini'}
-                  </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
-                    Total {mutations?.length || 0}
-                  </span>
-                </div>
-                {(mutations || []).length > 5 && (
-                  <button
-                    type="button"
-                    onClick={() => setShowAllMutations(!showAllMutations)}
-                    className="text-xs font-bold text-[#00D29E] hover:underline cursor-pointer"
-                  >
-                    {showAllMutations ? 'Tampilkan 5 Terbaru' : `Lihat Semua (${mutations?.length || 0}) →`}
-                  </button>
-                )}
-              </div>
-
               <div className="bg-white rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] divide-y divide-slate-100 overflow-hidden">
-                {(showAllMutations ? (mutations || []).slice().reverse() : (mutations || []).slice().reverse().slice(0, 5))
-                  .map((m) => {
-                    const item = items?.find((it) => String(it.id) === String(m.item_id));
-                    const isIn = m.type === 'in';
-                    return (
-                      <div
-                        key={m.id}
-                        className="p-4 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition"
-                      >
-                        <div className="flex items-center gap-3.5 min-w-0">
-                          <div
-                            className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border ${isIn
+                {paginatedMutations.map((m) => {
+                  const item = items?.find((it) => String(it.id) === String(m.item_id));
+                  const isIn = m.type === 'in';
+                  return (
+                    <div
+                      key={m.id}
+                      className="p-4 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition"
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div
+                          className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border ${
+                            isIn
                               ? 'bg-emerald-50 text-[#00D29E] border-emerald-200/60'
                               : 'bg-rose-50 text-rose-600 border-rose-200/60'
-                              }`}
-                          >
-                            {isIn ? (
-                              <ArrowDownLeft className="w-5 h-5 stroke-[2.5]" />
-                            ) : (
-                              <ArrowUpRight className="w-5 h-5 stroke-[2.5]" />
-                            )}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="font-extrabold text-sm text-[#071A24] truncate">
-                              {item ? item.name : 'Komoditas'}
-                            </div>
-                            <div className="text-xs text-slate-500 mt-0.5 font-medium">
-                              Perubahan: <span className="tabular-nums font-bold text-[#071A24]">{m.previous_stock} → {m.new_stock}</span> {m.unit || ''} • <span className="tabular-nums text-slate-400">{formatDate(m.date, 'short')}</span>
-                            </div>
-                            {m.notes && (
-                              <div className="text-[11px] text-slate-400 italic line-clamp-1 mt-0.5">
-                                "{m.notes}"
-                              </div>
-                            )}
-                          </div>
+                          }`}
+                        >
+                          {isIn ? (
+                            <ArrowDownLeft className="w-5 h-5 stroke-[2.5]" />
+                          ) : (
+                            <ArrowUpRight className="w-5 h-5 stroke-[2.5]" />
+                          )}
                         </div>
-
-                        <div className="text-right shrink-0">
-                          <div
-                            className={`font-black text-sm sm:text-base tabular-nums ${isIn ? 'text-[#00D29E]' : 'text-rose-600'
-                              }`}
-                          >
-                            {isIn ? '+' : '-'}{m.qty} {m.unit || ''}
+                        <div className="min-w-0">
+                          <div className="font-extrabold text-sm text-[#071A24] truncate">
+                            {item ? item.name : 'Komoditas'}
                           </div>
-                          <span
-                            className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border mt-0.5 ${isIn
-                              ? 'bg-emerald-50 text-[#00D29E] border-emerald-200'
-                              : 'bg-rose-50 text-rose-600 border-rose-200'
-                              }`}
-                          >
-                            {isIn ? 'Masuk' : 'Keluar'}
-                          </span>
+                          <div className="text-xs text-slate-500 mt-0.5 font-medium">
+                            Perubahan:{' '}
+                            <span className="tabular-nums font-bold text-[#071A24]">
+                              {m.previous_stock} → {m.new_stock}
+                            </span>{' '}
+                            {m.unit || ''} •{' '}
+                            <span className="tabular-nums text-slate-400">
+                              {formatDate(m.date, 'short')}
+                            </span>
+                          </div>
+                          {m.notes && (
+                            <div className="text-[11px] text-slate-400 italic line-clamp-1 mt-0.5">
+                              "{m.notes}"
+                            </div>
+                          )}
                         </div>
                       </div>
-                    );
-                  })}
+
+                      <div className="text-right shrink-0">
+                        <div
+                          className={`font-black text-sm sm:text-base tabular-nums ${
+                            isIn ? 'text-[#00D29E]' : 'text-rose-600'
+                          }`}
+                        >
+                          {isIn ? '+' : '-'}{m.qty} {m.unit || ''}
+                        </div>
+                        <span
+                          className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border mt-0.5 ${
+                            isIn
+                              ? 'bg-emerald-50 text-[#00D29E] border-emerald-200'
+                              : 'bg-rose-50 text-rose-600 border-rose-200'
+                          }`}
+                        >
+                          {isIn ? 'Masuk' : 'Keluar'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
-              {(mutations || []).length > 5 && !showAllMutations && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllMutations(true)}
-                  className="w-full py-3 rounded-2xl bg-slate-100 hover:bg-slate-200/80 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
-                >
-                  <span>Buka Semua Riwayat Mutasi ({mutations?.length || 0} Catatan)</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              )}
+              {/* Anti-Lag Reusable Pagination Load More Button */}
+              <LoadMoreButton
+                remainingCount={remainingMutations}
+                onClick={loadMoreMutations}
+              />
             </div>
           )}
         </div>

@@ -6,6 +6,7 @@ import { formatCurrency, formatDate, formatDatetime } from '../../lib/formatters
 import { uploadReceiptImage } from '../../lib/storage.js';
 import { createSupabaseTransaction } from '../../lib/supabaseService.js';
 import useTransactions from '../../hooks/useTransactions.js';
+import { usePagination } from '../../hooks/usePagination.js';
 import {
   Plus,
   Search,
@@ -47,6 +48,8 @@ import { Button } from '../ui/Button.jsx';
 import { BottomSheet } from '../ui/BottomSheet.jsx';
 import { SkeletonCard } from '../ui/Skeleton.jsx';
 import { EmptyState } from '../ui/EmptyState.jsx';
+import { LoadMoreButton } from '../ui/LoadMoreButton.jsx';
+import CapitalRotationsView from './CapitalRotationsView.jsx';
 
 /**
  * FlowMint-style Modern Transactions & Cash Flow View
@@ -72,8 +75,11 @@ export default function TransactionsView() {
   const contacts = useLiveQuery(() => db.contacts.toArray(), [], []);
   const items = useLiveQuery(() => db.items.toArray(), [], []);
 
-  // 2. Banking Timeline Filter & Search State
-  const [selectedPeriod, setSelectedPeriod] = useState('all'); // all | this_month | last_30_days
+  // 2. Main View Mode: 'rotations' (Proyek Rotasi Modal) | 'transactions' (Kasir/Dagang Ritel)
+  const [mainTab, setMainTab] = useState('rotations');
+
+  // 3. Banking Timeline Filter & Search State
+  const [selectedPeriod, setSelectedPeriod] = useState('this_month'); // this_month (Anti-Lag default) | all | last_30_days
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('all'); // all | income | expense | transfer | credit
   const [filterPayment, setFilterPayment] = useState('all'); // all | paid | partial | credit
@@ -86,7 +92,7 @@ export default function TransactionsView() {
   const activeFilterCount = (filterPayment !== 'all' ? 1 : 0) + (sortBy !== 'newest' ? 1 : 0);
 
   const handleResetFilters = () => {
-    setSelectedPeriod('all');
+    setSelectedPeriod('this_month');
     setFilterType('all');
     setFilterPayment('all');
     setSortBy('newest');
@@ -354,14 +360,25 @@ export default function TransactionsView() {
       });
   }, [transactions, selectedPeriod, filterType, filterPayment, search, sortBy, contactMap, currentMonth, currentYear, now]);
 
+  // Anti-Lag Pagination: 20 items initial, reset on any filter/search change
+  const {
+    displayedItems: paginatedTransactions,
+    remainingCount: remainingTransactions,
+    loadMore: loadMoreTransactions,
+  } = usePagination(filteredTransactions, {
+    initialLimit: 20,
+    step: 20,
+    resetDependencies: [selectedPeriod, filterType, filterPayment, sortBy, search],
+  });
+
   const isLoading = transactions === undefined;
 
-  // Group transactions by date for authentic banking timeline
+  // Group transactions by date for authentic banking timeline (Paginated for high performance)
   const groupedTransactions = useMemo(() => {
     const groups = [];
     const dateMap = new Map();
 
-    filteredTransactions.forEach((tx) => {
+    paginatedTransactions.forEach((tx) => {
       const dateKey = tx.date ? tx.date.slice(0, 10) : 'Tanpa Tanggal';
       if (!dateMap.has(dateKey)) {
         const arr = [];
@@ -372,7 +389,7 @@ export default function TransactionsView() {
     });
 
     return groups;
-  }, [filteredTransactions]);
+  }, [paginatedTransactions]);
 
   // Date label formatting helper
   const getDateLabel = (dateStr) => {
@@ -427,20 +444,56 @@ export default function TransactionsView() {
 
         {/* Primary CTA */}
         <div className="flex items-center gap-2 self-start sm:self-center">
-          <button
-            type="button"
-            onClick={() => {
-              setDefaultTransactionType('income');
-              setShowTransactionForm(true);
-            }}
-            className="inline-flex items-center gap-2 bg-[#071A24] hover:bg-[#0B2533] active:scale-95 text-white px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm shadow-sm transition ios-spring-tap cursor-pointer"
-          >
-            <Plus className="w-4 h-4 text-[#00D29E] stroke-[3]" />
-            <span>Catat Transaksi</span>
-          </button>
+          {mainTab === 'transactions' && (
+            <button
+              type="button"
+              onClick={() => {
+                setDefaultTransactionType('income');
+                setShowTransactionForm(true);
+              }}
+              className="inline-flex items-center gap-2 bg-[#071A24] hover:bg-[#0B2533] active:scale-95 text-white px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm shadow-sm transition ios-spring-tap cursor-pointer"
+            >
+              <Plus className="w-4 h-4 text-[#00D29E] stroke-[3]" />
+              <span>Catat Transaksi</span>
+            </button>
+          )}
         </div>
       </div>
 
+      {/* =========================================================================
+          VIEW MODE SWITCHER (Apple HIG): Proyek Rotasi Modal vs Transaksi Kasir
+         ========================================================================= */}
+      <div className="flex p-1 bg-slate-200/80 rounded-2xl border border-slate-300/60 max-w-md w-full">
+        <button
+          type="button"
+          onClick={() => setMainTab('rotations')}
+          className={`flex-1 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+            mainTab === 'rotations'
+              ? 'bg-[#071A24] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5 text-[#00D29E]" />
+          <span>Proyek Rotasi Modal</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMainTab('transactions')}
+          className={`flex-1 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+            mainTab === 'transactions'
+              ? 'bg-white text-[#071A24] shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Receipt className="w-3.5 h-3.5" />
+          <span>Transaksi Kasir / Dagang</span>
+        </button>
+      </div>
+
+      {mainTab === 'rotations' ? (
+        <CapitalRotationsView />
+      ) : (
+        <>
       {/* =========================================================================
           2. BANKING CASH FLOW SUMMARY BAR (Ringkas & Langsung Paham)
          ========================================================================= */}
@@ -474,29 +527,29 @@ export default function TransactionsView() {
           </div>
         </div>
 
-        {/* In/Out Metrics Grid */}
-        <div className="grid grid-cols-2 gap-2.5 sm:gap-4 pt-1">
+        {/* In/Out Metrics Grid (Optimized for Mobile 393px to prevent truncation) */}
+        <div className="grid grid-cols-2 gap-2 sm:gap-4 pt-1">
           {/* Uang Masuk */}
-          <div className="p-3 sm:p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-100/80 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-white text-[#00D29E] flex items-center justify-center shrink-0 shadow-xs border border-emerald-100">
-              <ArrowDownLeft className="w-5 h-5 stroke-[2.5]" />
+          <div className="p-2 sm:p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-100/80 flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-xl bg-white text-[#00D29E] flex items-center justify-center shrink-0 shadow-xs border border-emerald-100">
+              <ArrowDownLeft className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
             </div>
-            <div className="min-w-0">
-              <span className="text-[11px] font-bold text-emerald-800/80 block">Uang Masuk</span>
-              <div className="text-sm sm:text-lg font-black text-emerald-700 tracking-tight tabular-nums truncate">
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] sm:text-[11px] font-bold text-emerald-800/80 block leading-tight">Uang Masuk</span>
+              <div className="text-xs min-[375px]:text-[13px] sm:text-base lg:text-lg font-black text-emerald-700 tracking-tight tabular-nums leading-snug whitespace-nowrap">
                 +{formatCurrency(metrics.income)}
               </div>
             </div>
           </div>
 
           {/* Uang Keluar */}
-          <div className="p-3 sm:p-3.5 rounded-2xl bg-rose-50/70 border border-rose-100/80 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-white text-rose-500 flex items-center justify-center shrink-0 shadow-xs border border-rose-100">
-              <ArrowUpRight className="w-5 h-5 stroke-[2.5]" />
+          <div className="p-2 sm:p-3.5 rounded-2xl bg-rose-50/70 border border-rose-100/80 flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-xl bg-white text-rose-500 flex items-center justify-center shrink-0 shadow-xs border border-rose-100">
+              <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
             </div>
-            <div className="min-w-0">
-              <span className="text-[11px] font-bold text-rose-800/80 block">Uang Keluar</span>
-              <div className="text-sm sm:text-lg font-black text-rose-600 tracking-tight tabular-nums truncate">
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] sm:text-[11px] font-bold text-rose-800/80 block leading-tight">Uang Keluar</span>
+              <div className="text-xs min-[375px]:text-[13px] sm:text-base lg:text-lg font-black text-rose-600 tracking-tight tabular-nums leading-snug whitespace-nowrap">
                 -{formatCurrency(metrics.expense)}
               </div>
             </div>
@@ -809,7 +862,15 @@ export default function TransactionsView() {
               </div>
             );
           })}
+
+          {/* Anti-Lag Reusable Pagination Load More Button */}
+          <LoadMoreButton
+            remainingCount={remainingTransactions}
+            onClick={loadMoreTransactions}
+          />
         </div>
+      )}
+      </>
       )}
 
       {/* =========================================================================

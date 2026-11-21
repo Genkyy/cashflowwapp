@@ -4,6 +4,8 @@ import { formatCurrency, formatDate, formatWaLink } from '../../lib/formatters.j
 import { exportToPDF, exportToCSV, generateWAMessage } from '../../lib/exporters.js';
 import { SkeletonCard, SkeletonTable } from '../ui/Skeleton.jsx';
 import EmptyState from '../ui/EmptyState.jsx';
+import LoadMoreButton from '../ui/LoadMoreButton.jsx';
+import usePagination from '../../hooks/usePagination.js';
 import {
   TrendingUp,
   DollarSign,
@@ -51,6 +53,7 @@ export default function ReportsView() {
   // 1. Tab state: pl (Laba Rugi) | cashflow (Arus Kas) | debts (Piutang & Utang) | stock (Valuasi Stok)
   const [activeReport, setActiveReport] = useState('pl');
   const [debtSubTab, setDebtSubTab] = useState('receivables'); // receivables | payables
+  const [debtStatus, setDebtStatus] = useState('unpaid'); // unpaid ('Belum Lunas' - default) | paid ('Riwayat Lunas')
 
   // 2. Dynamic Period Filter State
   const now = new Date();
@@ -120,6 +123,38 @@ export default function ReportsView() {
   useEffect(() => {
     loadReports();
   }, [loadReports]);
+
+  // Current active debt lists (Unpaid & Paid)
+  const currentUnpaidList = useMemo(() => {
+    if (debtSubTab === 'receivables') return recData?.list || [];
+    return payData?.list || [];
+  }, [debtSubTab, recData, payData]);
+
+  const currentPaidList = useMemo(() => {
+    if (debtSubTab === 'receivables') return recData?.paidList || [];
+    return payData?.paidList || [];
+  }, [debtSubTab, recData, payData]);
+
+  // Anti-Lag Pagination: 20 items initial view, reset on tab/period changes
+  const {
+    displayedItems: paginatedUnpaidList,
+    remainingCount: remainingUnpaid,
+    loadMore: loadMoreUnpaid,
+  } = usePagination(currentUnpaidList, {
+    initialLimit: 20,
+    step: 20,
+    resetDependencies: [debtSubTab, debtStatus, periodPreset],
+  });
+
+  const {
+    displayedItems: paginatedPaidList,
+    remainingCount: remainingPaid,
+    loadMore: loadMorePaid,
+  } = usePagination(currentPaidList, {
+    initialLimit: 20,
+    step: 20,
+    resetDependencies: [debtSubTab, debtStatus, periodPreset],
+  });
 
   // PDF Export
   const handleExportPDF = () => {
@@ -390,10 +425,10 @@ export default function ReportsView() {
       {/* Loading Skeleton */}
       {loading && (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <SkeletonCard height="h-28" />
-            <SkeletonCard height="h-28" />
-            <SkeletonCard height="h-28" />
+          <div className="grid grid-cols-3 gap-2 sm:gap-4">
+            <SkeletonCard height="h-24 sm:h-28" />
+            <SkeletonCard height="h-24 sm:h-28" />
+            <SkeletonCard height="h-24 sm:h-28" />
           </div>
           <SkeletonCard height="h-48" />
         </div>
@@ -404,90 +439,147 @@ export default function ReportsView() {
          ========================================================================= */}
       {!loading && activeReport === 'pl' && plData && (
         <div className="space-y-6 animate-in fade-in duration-200">
-          {/* Profit & Loss Flow Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-            {/* Box 1: Omset Penjualan */}
-            <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)]">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  Total Penjualan (Omset)
+          {/* Profit & Loss Flow Cards: Laba Bruto, Beban & Penyusutan, Laba Netto (Satu Baris Kompak Anti-Scroll) */}
+          <div className="grid grid-cols-3 gap-2 sm:gap-4">
+            {/* Box 1: Laba Bruto (Kotor) */}
+            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+              <div className="flex items-center justify-between mb-1 gap-1">
+                <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
+                  Laba Bruto
                 </span>
-                <div className="w-7 h-7 rounded-xl bg-emerald-50 text-[#00D29E] flex items-center justify-center">
-                  <ArrowDownLeft className="w-4 h-4 stroke-[2.5]" />
+                <div className="w-5 h-5 sm:w-7 sm:h-7 rounded-lg sm:rounded-xl bg-emerald-50 text-[#00D29E] flex items-center justify-center shrink-0">
+                  <TrendingUp className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
                 </div>
               </div>
-              <div className="text-2xl sm:text-3xl font-black text-[#00D29E] tabular-nums tracking-tight">
-                {formatCurrency(plData.totalRevenue)}
+              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-emerald-700 tabular-nums tracking-tight truncate">
+                +{formatCurrency(plData.grossProfit)}
               </div>
-              <div className="text-xs text-slate-400 mt-1 font-medium">
-                {plData.transactionCount} transaksi penjualan
+              <div className="text-[9px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
+                {plData.rotationGrossProfit > 0 ? (
+                  <span>Realisasi Rotasi ({plData.completedRotationsCount} batch)</span>
+                ) : (
+                  <span>Omset: {formatCurrency(plData.totalRevenue)}</span>
+                )}
               </div>
             </div>
 
-            {/* Box 2: HPP (Harga Pokok Penjualan) */}
-            <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)]">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  HPP (Beban Pokok)
+            {/* Box 2: Beban Operasional & Penyusutan */}
+            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+              <div className="flex items-center justify-between mb-1 gap-1">
+                <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
+                  Beban & Susut
                 </span>
-                <div className="w-7 h-7 rounded-xl bg-slate-100 text-[#071A24] flex items-center justify-center">
-                  <Package className="w-4 h-4 stroke-[2.5]" />
+                <div className="w-5 h-5 sm:w-7 sm:h-7 rounded-lg sm:rounded-xl bg-rose-50 text-rose-500 flex items-center justify-center shrink-0">
+                  <ArrowUpRight className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
                 </div>
               </div>
-              <div className="text-2xl sm:text-3xl font-black text-slate-800 tabular-nums tracking-tight">
-                {formatCurrency(plData.totalCOGS)}
+              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-slate-800 tabular-nums tracking-tight truncate">
+                {formatCurrency(plData.totalOperationalExpenses)}
               </div>
-              <div className="text-xs text-slate-400 mt-1 font-medium">
-                Laba Kotor: <strong className="text-slate-700">{formatCurrency(plData.grossProfit)}</strong>
+              <div className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
+                Operasional & susut
               </div>
             </div>
 
-            {/* Box 3: Estimasi Hasil Bersih (Logis: Hijau jika Surplus, Merah/Amber jika Defisit) */}
+            {/* Box 3: Laba Netto (Bersih) */}
             <div
-              className={`p-5 rounded-3xl border shadow-[0_4px_24px_rgba(0,0,0,0.03)] ${
+              className={`p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0 ${
                 plData.netProfit >= 0
                   ? 'bg-gradient-to-br from-[#F0FDF9] to-[#ECFDF5] border-[#A7F3D0]'
                   : 'bg-gradient-to-br from-[#FFF1F2] to-[#FFE4E6] border-[#FECDD3]'
               }`}
             >
-              <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center justify-between mb-1 gap-1">
                 <span
-                  className={`text-xs font-bold uppercase tracking-wider ${
+                  className={`text-[10px] sm:text-xs font-bold uppercase tracking-tight sm:tracking-wider truncate ${
                     plData.netProfit >= 0 ? 'text-emerald-800' : 'text-rose-800'
                   }`}
                 >
-                  {plData.netProfit >= 0 ? 'Laba Bersih Operasional' : 'Defisit Bersih Operasional'}
+                  {plData.netProfit >= 0 ? 'Laba Netto' : 'Defisit Netto'}
                 </span>
                 <div
-                  className={`w-7 h-7 rounded-xl flex items-center justify-center ${
+                  className={`w-5 h-5 sm:w-7 sm:h-7 rounded-lg sm:rounded-xl flex items-center justify-center shrink-0 ${
                     plData.netProfit >= 0 ? 'bg-emerald-100 text-[#00D29E]' : 'bg-rose-100 text-rose-600'
                   }`}
                 >
                   {plData.netProfit >= 0 ? (
-                    <TrendingUp className="w-4 h-4 stroke-[2.5]" />
+                    <TrendingUp className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
                   ) : (
-                    <AlertTriangle className="w-4 h-4 stroke-[2.5]" />
+                    <AlertTriangle className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
                   )}
                 </div>
               </div>
               <div
-                className={`text-2xl sm:text-3xl font-black tabular-nums tracking-tight ${
+                className={`text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black tabular-nums tracking-tight truncate ${
                   plData.netProfit >= 0 ? 'text-[#00D29E]' : 'text-rose-600'
                 }`}
               >
                 {plData.netProfit >= 0 ? '+' : ''}{formatCurrency(plData.netProfit)}
               </div>
               <div
-                className={`text-xs mt-1 font-semibold ${
+                className={`text-[9px] sm:text-xs mt-0.5 sm:mt-1 font-semibold truncate hidden min-[360px]:block ${
                   plData.netProfit >= 0 ? 'text-emerald-700' : 'text-rose-600'
                 }`}
               >
-                {plData.netProfit >= 0
-                  ? 'Surplus operasional berjalan sehat'
-                  : `Beban operasional (${formatCurrency(plData.totalOperationalExpenses)}) melebihi margin kotor`}
+                {plData.netProfit >= 0 ? 'Surplus bersih' : 'Defisit operasional'}
               </div>
             </div>
           </div>
+
+          {/* Kartu Ringkasan Kinerja Rotasi Modal (CV Amanah Barokah) */}
+          {(plData.rotationTotalCapital > 0 || plData.waitingModalTotal > 0) && (
+            <div className="bg-gradient-to-br from-[#071A24] via-[#0B2533] to-[#04121A] text-white rounded-3xl p-5 sm:p-6 shadow-md border border-slate-800">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-700/60">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-[#00D29E]/20 text-[#00D29E] border border-[#00D29E]/30">
+                      Siklus Rotasi Modal
+                    </span>
+                  </div>
+                  <h3 className="font-extrabold text-base sm:text-lg tracking-tight text-white">
+                    Realisasi & Efisiensi Proyek Batch
+                  </h3>
+                  <p className="text-xs text-slate-400 font-medium">
+                    Monitoring siklus modal dan pengembalian profit (Margin 8% Susu MBG, Telur, Minyak).
+                  </p>
+                </div>
+                <div className="text-right self-start sm:self-auto">
+                  <span className="text-xs text-slate-400 block">Rata-rata ROI</span>
+                  <span className="text-lg sm:text-xl font-black text-[#00D29E] tabular-nums">
+                    {plData.rotationTotalCapital > 0
+                      ? `${((plData.rotationGrossProfit / plData.rotationTotalCapital) * 100).toFixed(1)}%`
+                      : '0%'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 sm:gap-3.5 pt-3 sm:pt-4">
+                <div className="bg-white/5 p-2.5 sm:p-3.5 rounded-2xl border border-white/10 min-w-0">
+                  <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium block truncate">Modal Selesai</span>
+                  <span className="text-xs min-[360px]:text-sm sm:text-base lg:text-lg font-black text-white tabular-nums truncate block">
+                    {formatCurrency(plData.rotationTotalCapital)}
+                  </span>
+                  <span className="text-[9px] sm:text-[10px] text-slate-400 block mt-0.5 truncate hidden min-[360px]:block">{plData.completedRotationsCount} batch cair</span>
+                </div>
+
+                <div className="bg-white/5 p-2.5 sm:p-3.5 rounded-2xl border border-white/10 min-w-0">
+                  <span className="text-[10px] sm:text-[11px] text-emerald-400 font-medium block truncate">Profit Cair</span>
+                  <span className="text-xs min-[360px]:text-sm sm:text-base lg:text-lg font-black text-[#00D29E] tabular-nums truncate block">
+                    +{formatCurrency(plData.rotationGrossProfit)}
+                  </span>
+                  <span className="text-[9px] sm:text-[10px] text-emerald-300/80 block mt-0.5 truncate hidden min-[360px]:block">Masuk kas</span>
+                </div>
+
+                <div className="bg-white/5 p-2.5 sm:p-3.5 rounded-2xl border border-white/10 min-w-0">
+                  <span className="text-[10px] sm:text-[11px] text-amber-300 font-medium block truncate">Modal Lapangan</span>
+                  <span className="text-xs min-[360px]:text-sm sm:text-base lg:text-lg font-black text-amber-300 tabular-nums truncate block">
+                    {formatCurrency(plData.waitingModalTotal)}
+                  </span>
+                  <span className="text-[9px] sm:text-[10px] text-amber-200/80 block mt-0.5 truncate hidden min-[360px]:block">{plData.waitingRotationsCount} batch Waiting</span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Commodity Omset Distribution (Sleek Horizontal Bar & Cards) */}
           <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] space-y-4">
@@ -673,35 +765,60 @@ export default function ReportsView() {
          ========================================================================= */}
       {!loading && activeReport === 'cashflow' && cfData && (
         <div className="space-y-6 animate-in fade-in duration-200">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-            <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)]">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">
-                Total Kas Masuk
-              </span>
-              <div className="text-2xl sm:text-3xl font-black text-[#00D29E] tabular-nums tracking-tight">
+          {/* Cash Flow Summary Cards: Satu Baris Kompak Anti-Scroll */}
+          <div className="grid grid-cols-3 gap-2 sm:gap-4">
+            {/* Box 1: Total Kas Masuk */}
+            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+              <div className="flex items-center justify-between mb-1 gap-1">
+                <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
+                  Kas Masuk
+                </span>
+                <div className="w-5 h-5 sm:w-7 sm:h-7 rounded-lg sm:rounded-xl bg-emerald-50 text-[#00D29E] flex items-center justify-center shrink-0">
+                  <ArrowDownLeft className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
+                </div>
+              </div>
+              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-[#00D29E] tabular-nums tracking-tight truncate">
                 +{formatCurrency(cfData.cashIn)}
               </div>
-              <div className="text-xs text-slate-400 mt-1 font-medium">Uang riil diterima</div>
+              <div className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
+                Uang riil diterima
+              </div>
             </div>
 
-            <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)]">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">
-                Total Kas Keluar
-              </span>
-              <div className="text-2xl sm:text-3xl font-black text-rose-600 tabular-nums tracking-tight">
+            {/* Box 2: Total Kas Keluar */}
+            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+              <div className="flex items-center justify-between mb-1 gap-1">
+                <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
+                  Kas Keluar
+                </span>
+                <div className="w-5 h-5 sm:w-7 sm:h-7 rounded-lg sm:rounded-xl bg-rose-50 text-rose-500 flex items-center justify-center shrink-0">
+                  <ArrowUpRight className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
+                </div>
+              </div>
+              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-rose-600 tabular-nums tracking-tight truncate">
                 -{formatCurrency(cfData.cashOut)}
               </div>
-              <div className="text-xs text-slate-400 mt-1 font-medium">Belanja stok & operasional</div>
+              <div className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
+                Belanja & operasional
+              </div>
             </div>
 
-            <div className="bg-gradient-to-br from-[#071A24] to-[#0B2533] text-white p-5 rounded-3xl border border-slate-800 shadow-[0_4px_24px_rgba(0,0,0,0.06)]">
-              <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider block mb-1">
-                Saldo Kas & Bank Sekarang
-              </span>
-              <div className="text-2xl sm:text-3xl font-black text-[#00D29E] tabular-nums tracking-tight">
+            {/* Box 3: Saldo Kas & Bank */}
+            <div className="bg-gradient-to-br from-[#071A24] to-[#0B2533] text-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-800 shadow-[0_4px_24px_rgba(0,0,0,0.06)] flex flex-col justify-between min-w-0">
+              <div className="flex items-center justify-between mb-1 gap-1">
+                <span className="text-[10px] sm:text-xs font-bold text-slate-300 uppercase tracking-tight sm:tracking-wider truncate">
+                  Saldo Kas
+                </span>
+                <div className="w-5 h-5 sm:w-7 sm:h-7 rounded-lg sm:rounded-xl bg-white/10 text-[#00D29E] flex items-center justify-center shrink-0">
+                  <DollarSign className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
+                </div>
+              </div>
+              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-[#00D29E] tabular-nums tracking-tight truncate">
                 {formatCurrency(cfData.closingBalance)}
               </div>
-              <div className="text-xs text-slate-300 mt-1 font-medium">Likuiditas siap pakai</div>
+              <div className="text-[9px] sm:text-xs text-slate-300 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
+                Likuiditas siap pakai
+              </div>
             </div>
           </div>
 
@@ -794,247 +911,419 @@ export default function ReportsView() {
          ========================================================================= */}
       {!loading && activeReport === 'debts' && (
         <div className="space-y-4 animate-in fade-in duration-200">
-          {/* Sub Switch */}
-          <div className="inline-flex p-1 bg-slate-100 rounded-2xl border border-slate-200/60">
-            <button
-              type="button"
-              onClick={() => setDebtSubTab('receivables')}
-              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                debtSubTab === 'receivables' ? 'bg-[#071A24] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Piutang Pelanggan ({recData?.list?.length || 0})
-            </button>
-            <button
-              type="button"
-              onClick={() => setDebtSubTab('payables')}
-              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                debtSubTab === 'payables' ? 'bg-[#071A24] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Utang Supplier ({payData?.list?.length || 0})
-            </button>
+          {/* Dual Segmented Controls: Sub-Type & Status (Belum Lunas vs Riwayat Lunas) */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            {/* Sub Switch: Piutang vs Utang */}
+            <div className="inline-flex p-1 bg-slate-100 rounded-2xl border border-slate-200/60 self-start">
+              <button
+                type="button"
+                onClick={() => setDebtSubTab('receivables')}
+                className={`px-4 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  debtSubTab === 'receivables' ? 'bg-[#071A24] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Piutang Pelanggan ({debtStatus === 'unpaid' ? recData?.list?.length || 0 : recData?.paidList?.length || 0})
+              </button>
+              <button
+                type="button"
+                onClick={() => setDebtSubTab('payables')}
+                className={`px-4 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  debtSubTab === 'payables' ? 'bg-[#071A24] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Utang Supplier ({debtStatus === 'unpaid' ? payData?.list?.length || 0 : payData?.paidList?.length || 0})
+              </button>
+            </div>
+
+            {/* Smart Segmented Control Status: Belum Lunas (default aktif) vs Riwayat Lunas */}
+            <div className="inline-flex p-1 bg-slate-100 rounded-2xl border border-slate-200/60 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setDebtStatus('unpaid')}
+                className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  debtStatus === 'unpaid'
+                    ? 'bg-[#071A24] text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-amber-500" />
+                <span>Belum Lunas</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                  debtStatus === 'unpaid' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {debtSubTab === 'receivables' ? recData?.list?.length || 0 : payData?.list?.length || 0}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDebtStatus('paid')}
+                className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  debtStatus === 'paid'
+                    ? 'bg-[#00D29E] text-[#071A24] font-black shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                <span>Riwayat Lunas</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                  debtStatus === 'paid' ? 'bg-[#071A24]/15 text-[#071A24]' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {debtSubTab === 'receivables' ? recData?.paidList?.length || 0 : payData?.paidList?.length || 0}
+                </span>
+              </button>
+            </div>
           </div>
 
-          {/* Sub Tab: Piutang */}
-          {debtSubTab === 'receivables' && recData && (
-            <div className="space-y-4">
-              {/* Aging Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                {[
-                  { label: '0-30 Hari', val: recData.aging.current, color: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
-                  { label: '31-60 Hari', val: recData.aging.days30, color: 'text-amber-700 bg-amber-50 border-amber-200' },
-                  { label: '61-90 Hari', val: recData.aging.days60, color: 'text-orange-700 bg-orange-50 border-orange-200' },
-                  { label: '> 90 Hari (Macet)', val: recData.aging.days90Plus, color: 'text-rose-700 bg-rose-50 border-rose-200' },
-                ].map((ag, i) => (
-                  <div key={i} className={`p-3.5 rounded-2xl border ${ag.color}`}>
-                    <span className="text-[10px] font-bold block mb-1 uppercase tracking-wide">{ag.label}</span>
-                    <span className="text-sm sm:text-base font-black tabular-nums">{formatCurrency(ag.val)}</span>
+          {/* =========================================================================
+              VIEW 1: BELUM LUNAS (ACTIVE BILLING & AGING)
+             ========================================================================= */}
+          {debtStatus === 'unpaid' && (
+            <>
+              {/* Sub Tab: Piutang */}
+              {debtSubTab === 'receivables' && recData && (
+                <div className="space-y-4">
+                  {/* Aging Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {[
+                      { label: '0-30 Hari', val: recData.aging.current, color: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+                      { label: '31-60 Hari', val: recData.aging.days30, color: 'text-amber-700 bg-amber-50 border-amber-200' },
+                      { label: '61-90 Hari', val: recData.aging.days60, color: 'text-orange-700 bg-orange-50 border-orange-200' },
+                      { label: '> 90 Hari (Macet)', val: recData.aging.days90Plus, color: 'text-rose-700 bg-rose-50 border-rose-200' },
+                    ].map((ag, i) => (
+                      <div key={i} className={`p-3.5 rounded-2xl border ${ag.color}`}>
+                        <span className="text-[10px] font-bold block mb-1 uppercase tracking-wide">{ag.label}</span>
+                        <span className="text-sm sm:text-base font-black tabular-nums">{formatCurrency(ag.val)}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
 
-              {/* Invoices List */}
-              <div className="bg-white rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-                  <h3 className="font-bold text-[#071A24] text-sm tracking-tight">
-                    Daftar Piutang Pelanggan ({recData.list.length} Tagihan)
-                  </h3>
-                  <span className="text-xs font-black text-amber-600 tabular-nums">
-                    Total: {formatCurrency(recData.totalReceivable)}
-                  </span>
+                  {/* Invoices List */}
+                  <div className="bg-white rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] overflow-hidden">
+                    <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                      <h3 className="font-bold text-[#071A24] text-sm tracking-tight">
+                        Daftar Piutang Pelanggan ({recData.list.length} Tagihan Belum Lunas)
+                      </h3>
+                      <span className="text-xs font-black text-amber-600 tabular-nums">
+                        Total: {formatCurrency(recData.totalReceivable)}
+                      </span>
+                    </div>
+
+                    {recData.list.length === 0 ? (
+                      <div className="p-8 text-center text-slate-400 text-xs font-medium">
+                        Semua piutang pelanggan telah lunas.
+                      </div>
+                    ) : (
+                      <>
+                        {/* Mobile Stacked Invoice Cards (No horizontal scroll!) */}
+                        <div className="sm:hidden divide-y divide-slate-100">
+                          {paginatedUnpaidList.map((r) => {
+                            const waMsg = generateWAMessage('tagihan', {
+                              contactName: r.contactName,
+                              invoiceNumber: r.invoice_number,
+                              date: r.date,
+                              dueDate: r.due_date,
+                              totalAmount: r.total_amount,
+                              paidAmount: r.paid_amount,
+                              remainingAmount: r.remaining,
+                            });
+                            const waLink = formatWaLink(r.contactPhone || '08123456789', waMsg);
+
+                            return (
+                              <div key={r.id} className="p-4 space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <div className="font-extrabold text-sm text-[#071A24]">{r.contactName}</div>
+                                    <div className="text-xs text-slate-400 font-mono mt-0.5">
+                                      {r.invoice_number} • {formatDate(r.date, 'short')}
+                                    </div>
+                                  </div>
+                                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 tabular-nums">
+                                    {r.daysOutstanding} hari
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center justify-between p-2.5 rounded-2xl bg-amber-50/40 border border-amber-100">
+                                  <div>
+                                    <span className="text-[10px] text-slate-500 font-semibold uppercase block">Total Faktur</span>
+                                    <span className="text-xs font-bold text-slate-600 tabular-nums">{formatCurrency(r.total_amount)}</span>
+                                  </div>
+                                  <div className="text-right">
+                                    <span className="text-[10px] text-amber-800 font-bold uppercase block">Sisa Tagihan</span>
+                                    <span className="text-sm font-black text-amber-600 tabular-nums">{formatCurrency(r.remaining)}</span>
+                                  </div>
+                                </div>
+
+                                <a
+                                  href={waLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="w-full min-h-[38px] flex items-center justify-center gap-1.5 py-2 px-3 bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-xl text-xs font-bold transition ios-spring-tap shadow-2xs"
+                                >
+                                  <Send className="w-3.5 h-3.5" />
+                                  <span>Kirim Pengingat Tagihan via WhatsApp</span>
+                                </a>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Desktop Table */}
+                        <div className="hidden sm:block overflow-x-auto">
+                          <table className="w-full text-left text-xs sm:text-sm">
+                            <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-100">
+                              <tr>
+                                <th className="px-5 py-3.5">Faktur & Tanggal</th>
+                                <th className="px-5 py-3.5">Pelanggan</th>
+                                <th className="px-5 py-3.5 text-right">Total Transaksi</th>
+                                <th className="px-5 py-3.5 text-right">Sisa Piutang</th>
+                                <th className="px-5 py-3.5 text-center">Umur</th>
+                                <th className="px-5 py-3.5 text-center">Kirim Pengingat</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 font-medium">
+                              {paginatedUnpaidList.map((r) => {
+                                const waMsg = generateWAMessage('tagihan', {
+                                  contactName: r.contactName,
+                                  invoiceNumber: r.invoice_number,
+                                  date: r.date,
+                                  dueDate: r.due_date,
+                                  totalAmount: r.total_amount,
+                                  paidAmount: r.paid_amount,
+                                  remainingAmount: r.remaining,
+                                });
+                                const waLink = formatWaLink(r.contactPhone || '08123456789', waMsg);
+
+                                return (
+                                  <tr key={r.id} className="hover:bg-slate-50/70 transition">
+                                    <td className="px-5 py-4">
+                                      <div className="font-bold text-[#071A24]">{r.invoice_number}</div>
+                                      <div className="text-xs text-slate-400 tabular-nums">{formatDate(r.date, 'short')}</div>
+                                    </td>
+                                    <td className="px-5 py-4 font-semibold text-[#071A24]">
+                                      {r.contactName}
+                                      {r.contactPhone && (
+                                        <div className="text-[11px] text-slate-400 tabular-nums">{r.contactPhone}</div>
+                                      )}
+                                    </td>
+                                    <td className="px-5 py-4 text-right text-slate-600 tabular-nums">
+                                      {formatCurrency(r.total_amount)}
+                                    </td>
+                                    <td className="px-5 py-4 text-right font-black text-amber-600 tabular-nums">
+                                      {formatCurrency(r.remaining)}
+                                    </td>
+                                    <td className="px-5 py-4 text-center">
+                                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 tabular-nums">
+                                        {r.daysOutstanding} hari
+                                      </span>
+                                    </td>
+                                    <td className="px-5 py-4 text-center">
+                                      <a
+                                        href={waLink}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-xl text-xs font-bold transition ios-spring-tap"
+                                      >
+                                        <Send className="w-3.5 h-3.5" />
+                                        <span>Kirim WA</span>
+                                      </a>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Anti-Lag Load More Button for Unpaid Receivables */}
+                        <LoadMoreButton
+                          remainingCount={remainingUnpaid}
+                          onClick={loadMoreUnpaid}
+                        />
+                      </>
+                    )}
+                  </div>
                 </div>
+              )}
 
-                {/* Mobile Stacked Invoice Cards (No horizontal scroll!) */}
-                <div className="sm:hidden divide-y divide-slate-100">
-                  {recData.list.map((r) => {
-                    const waMsg = generateWAMessage('tagihan', {
-                      contactName: r.contactName,
-                      invoiceNumber: r.invoice_number,
-                      date: r.date,
-                      dueDate: r.due_date,
-                      totalAmount: r.total_amount,
-                      paidAmount: r.paid_amount,
-                      remainingAmount: r.remaining,
-                    });
-                    const waLink = formatWaLink(r.contactPhone || '08123456789', waMsg);
+              {/* Sub Tab: Utang */}
+              {debtSubTab === 'payables' && payData && (
+                <div className="bg-white rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] overflow-hidden">
+                  <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                    <h3 className="font-bold text-[#071A24] text-sm tracking-tight">
+                      Rekap Utang Usaha ke Supplier ({payData.list.length} Faktur Belum Lunas)
+                    </h3>
+                    <span className="text-xs font-black text-rose-600 tabular-nums">
+                      Total: {formatCurrency(payData.totalPayable)}
+                    </span>
+                  </div>
 
-                    return (
-                      <div key={r.id} className="p-4 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-extrabold text-sm text-[#071A24]">{r.contactName}</div>
-                            <div className="text-xs text-slate-400 font-mono mt-0.5">
-                              {r.invoice_number} • {formatDate(r.date, 'short')}
+                  {payData.list.length === 0 ? (
+                    <div className="p-8 text-center text-slate-400 text-xs font-medium">
+                      Semua utang supplier telah dilunasi.
+                    </div>
+                  ) : (
+                    <>
+                      {/* Mobile Stacked Payables Cards */}
+                      <div className="sm:hidden divide-y divide-slate-100">
+                        {paginatedUnpaidList.map((p) => (
+                          <div key={p.id} className="p-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div className="font-extrabold text-sm text-[#071A24]">{p.contactName}</div>
+                              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 tabular-nums">
+                                {p.daysOutstanding} hari
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-400 font-mono">{p.invoice_number}</div>
+                            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                              <span className="text-xs text-slate-500 font-medium">Total: {formatCurrency(p.total_amount)}</span>
+                              <div className="text-right">
+                                <span className="text-[10px] text-rose-500 font-bold block">Sisa Utang:</span>
+                                <span className="text-sm font-black text-rose-600 tabular-nums">{formatCurrency(p.remaining)}</span>
+                              </div>
                             </div>
                           </div>
-                          <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 tabular-nums">
-                            {r.daysOutstanding} hari
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between p-2.5 rounded-2xl bg-amber-50/40 border border-amber-100">
-                          <div>
-                            <span className="text-[10px] text-slate-500 font-semibold uppercase block">Total Faktur</span>
-                            <span className="text-xs font-bold text-slate-600 tabular-nums">{formatCurrency(r.total_amount)}</span>
-                          </div>
-                          <div className="text-right">
-                            <span className="text-[10px] text-amber-800 font-bold uppercase block">Sisa Tagihan</span>
-                            <span className="text-sm font-black text-amber-600 tabular-nums">{formatCurrency(r.remaining)}</span>
-                          </div>
-                        </div>
-
-                        <a
-                          href={waLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="w-full min-h-[38px] flex items-center justify-center gap-1.5 py-2 px-3 bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-xl text-xs font-bold transition ios-spring-tap shadow-2xs"
-                        >
-                          <Send className="w-3.5 h-3.5" />
-                          <span>Kirim Pengingat Tagihan via WhatsApp</span>
-                        </a>
+                        ))}
                       </div>
-                    );
-                  })}
-                </div>
 
-                {/* Desktop Table */}
-                <div className="hidden sm:block overflow-x-auto">
-                  <table className="w-full text-left text-xs sm:text-sm">
-                    <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-100">
-                      <tr>
-                        <th className="px-5 py-3.5">Faktur & Tanggal</th>
-                        <th className="px-5 py-3.5">Pelanggan</th>
-                        <th className="px-5 py-3.5 text-right">Total Transaksi</th>
-                        <th className="px-5 py-3.5 text-right">Sisa Piutang</th>
-                        <th className="px-5 py-3.5 text-center">Umur</th>
-                        <th className="px-5 py-3.5 text-center">Kirim Pengingat</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 font-medium">
-                      {recData.list.map((r) => {
-                        const waMsg = generateWAMessage('tagihan', {
-                          contactName: r.contactName,
-                          invoiceNumber: r.invoice_number,
-                          date: r.date,
-                          dueDate: r.due_date,
-                          totalAmount: r.total_amount,
-                          paidAmount: r.paid_amount,
-                          remainingAmount: r.remaining,
-                        });
-                        const waLink = formatWaLink(r.contactPhone || '08123456789', waMsg);
+                      {/* Desktop Table */}
+                      <div className="hidden sm:block overflow-x-auto">
+                        <table className="w-full text-left text-xs sm:text-sm">
+                          <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-100">
+                            <tr>
+                              <th className="px-5 py-3.5">Faktur & Tanggal</th>
+                              <th className="px-5 py-3.5">Supplier</th>
+                              <th className="px-5 py-3.5 text-right">Total Transaksi</th>
+                              <th className="px-5 py-3.5 text-right">Sisa Utang</th>
+                              <th className="px-5 py-3.5 text-center">Umur Utang</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-medium">
+                            {paginatedUnpaidList.map((p) => (
+                              <tr key={p.id} className="hover:bg-slate-50/70 transition">
+                                <td className="px-5 py-4 font-bold text-[#071A24]">{p.invoice_number}</td>
+                                <td className="px-5 py-4 font-semibold text-[#071A24]">{p.contactName}</td>
+                                <td className="px-5 py-4 text-right text-slate-600 tabular-nums">
+                                  {formatCurrency(p.total_amount)}
+                                </td>
+                                <td className="px-5 py-4 text-right font-black text-rose-600 tabular-nums">
+                                  {formatCurrency(p.remaining)}
+                                </td>
+                                <td className="px-5 py-4 text-center">
+                                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 tabular-nums">
+                                    {p.daysOutstanding} hari
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
 
-                        return (
-                          <tr key={r.id} className="hover:bg-slate-50/70 transition">
-                            <td className="px-5 py-4">
-                              <div className="font-bold text-[#071A24]">{r.invoice_number}</div>
-                              <div className="text-xs text-slate-400 tabular-nums">{formatDate(r.date, 'short')}</div>
-                            </td>
-                            <td className="px-5 py-4 font-semibold text-[#071A24]">
-                              {r.contactName}
-                              {r.contactPhone && (
-                                <div className="text-[11px] text-slate-400 tabular-nums">{r.contactPhone}</div>
-                              )}
-                            </td>
-                            <td className="px-5 py-4 text-right text-slate-600 tabular-nums">
-                              {formatCurrency(r.total_amount)}
-                            </td>
-                            <td className="px-5 py-4 text-right font-black text-amber-600 tabular-nums">
-                              {formatCurrency(r.remaining)}
-                            </td>
-                            <td className="px-5 py-4 text-center">
-                              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 tabular-nums">
-                                {r.daysOutstanding} hari
-                              </span>
-                            </td>
-                            <td className="px-5 py-4 text-center">
-                              <a
-                                href={waLink}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-xl text-xs font-bold transition ios-spring-tap"
-                              >
-                                <Send className="w-3.5 h-3.5" />
-                                <span>Kirim WA</span>
-                              </a>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                      {/* Anti-Lag Load More Button for Unpaid Payables */}
+                      <LoadMoreButton
+                        remainingCount={remainingUnpaid}
+                        onClick={loadMoreUnpaid}
+                      />
+                    </>
+                  )}
                 </div>
-              </div>
-            </div>
+              )}
+            </>
           )}
 
-          {/* Sub Tab: Utang */}
-          {debtSubTab === 'payables' && payData && (
+          {/* =========================================================================
+              VIEW 2: RIWAYAT LUNAS (ANTI-LAG PAGINATION MAX 20 ITEMS)
+             ========================================================================= */}
+          {debtStatus === 'paid' && (
             <div className="bg-white rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-                <h3 className="font-bold text-[#071A24] text-sm tracking-tight">
-                  Rekap Utang Usaha ke Supplier ({payData.list.length} Faktur)
-                </h3>
-                <span className="text-xs font-black text-rose-600 tabular-nums">
-                  Total: {formatCurrency(payData.totalPayable)}
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  <h3 className="font-bold text-[#071A24] text-sm tracking-tight">
+                    {debtSubTab === 'receivables' ? 'Riwayat Piutang Lunas' : 'Riwayat Utang Lunas'} ({currentPaidList.length} Transaksi Selesai)
+                  </h3>
+                </div>
+                <span className="text-xs font-black text-emerald-600 tabular-nums">
+                  Status: Lunas 100%
                 </span>
               </div>
 
-              {/* Mobile Stacked Payables Cards */}
-              <div className="sm:hidden divide-y divide-slate-100">
-                {payData.list.map((p) => (
-                  <div key={p.id} className="p-4 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="font-extrabold text-sm text-[#071A24]">{p.contactName}</div>
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 tabular-nums">
-                        {p.daysOutstanding} hari
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono">{p.invoice_number}</div>
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                      <span className="text-xs text-slate-500 font-medium">Total: {formatCurrency(p.total_amount)}</span>
-                      <div className="text-right">
-                        <span className="text-[10px] text-rose-500 font-bold block">Sisa Utang:</span>
-                        <span className="text-sm font-black text-rose-600 tabular-nums">{formatCurrency(p.remaining)}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Desktop Table */}
-              <div className="hidden sm:block overflow-x-auto">
-                <table className="w-full text-left text-xs sm:text-sm">
-                  <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-100">
-                    <tr>
-                      <th className="px-5 py-3.5">Faktur & Tanggal</th>
-                      <th className="px-5 py-3.5">Supplier</th>
-                      <th className="px-5 py-3.5 text-right">Total Transaksi</th>
-                      <th className="px-5 py-3.5 text-right">Sisa Utang</th>
-                      <th className="px-5 py-3.5 text-center">Umur Utang</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 font-medium">
-                    {payData.list.map((p) => (
-                      <tr key={p.id} className="hover:bg-slate-50/70 transition">
-                        <td className="px-5 py-4 font-bold text-[#071A24]">{p.invoice_number}</td>
-                        <td className="px-5 py-4 font-semibold text-[#071A24]">{p.contactName}</td>
-                        <td className="px-5 py-4 text-right text-slate-600 tabular-nums">
-                          {formatCurrency(p.total_amount)}
-                        </td>
-                        <td className="px-5 py-4 text-right font-black text-rose-600 tabular-nums">
-                          {formatCurrency(p.remaining)}
-                        </td>
-                        <td className="px-5 py-4 text-center">
-                          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 tabular-nums">
-                            {p.daysOutstanding} hari
+              {currentPaidList.length === 0 ? (
+                <EmptyState
+                  icon={CheckCircle2}
+                  title="Belum Ada Riwayat Pelunasan"
+                  description="Faktur yang statusnya telah lunas akan otomatis diarsipkan di riwayat ini agar layar utama tetap bersih."
+                />
+              ) : (
+                <>
+                  {/* Mobile Stacked Paid Cards */}
+                  <div className="sm:hidden divide-y divide-slate-100">
+                    {paginatedPaidList.map((item) => (
+                      <div key={item.id} className="p-4 space-y-2 hover:bg-slate-50/70 transition">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="font-extrabold text-sm text-[#071A24]">{item.contactName}</div>
+                            <div className="text-xs text-slate-400 font-mono mt-0.5">
+                              {item.invoice_number} • {formatDate(item.date, 'short')}
+                            </div>
+                          </div>
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>Lunas</span>
                           </span>
-                        </td>
-                      </tr>
+                        </div>
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                          <span className="text-xs text-slate-500 font-medium">Nominal Faktur:</span>
+                          <span className="text-sm font-black text-[#071A24] tabular-nums">
+                            {formatCurrency(item.total_amount)}
+                          </span>
+                        </div>
+                      </div>
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                  </div>
+
+                  {/* Desktop Table for Paid History */}
+                  <div className="hidden sm:block overflow-x-auto">
+                    <table className="w-full text-left text-xs sm:text-sm">
+                      <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-100">
+                        <tr>
+                          <th className="px-5 py-3.5">Faktur & Tanggal</th>
+                          <th className="px-5 py-3.5">{debtSubTab === 'receivables' ? 'Pelanggan' : 'Supplier'}</th>
+                          <th className="px-5 py-3.5 text-right">Total Transaksi</th>
+                          <th className="px-5 py-3.5 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium">
+                        {paginatedPaidList.map((item) => (
+                          <tr key={item.id} className="hover:bg-slate-50/70 transition">
+                            <td className="px-5 py-4">
+                              <div className="font-bold text-[#071A24]">{item.invoice_number}</div>
+                              <div className="text-xs text-slate-400 tabular-nums">{formatDate(item.date, 'short')}</div>
+                            </td>
+                            <td className="px-5 py-4 font-semibold text-[#071A24]">{item.contactName}</td>
+                            <td className="px-5 py-4 text-right font-black text-[#071A24] tabular-nums">
+                              {formatCurrency(item.total_amount)}
+                            </td>
+                            <td className="px-5 py-4 text-center">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>Lunas</span>
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Anti-Lag Load More Button: Max 20 items per click */}
+                  <LoadMoreButton
+                    remainingCount={remainingPaid}
+                    onClick={loadMorePaid}
+                  />
+                </>
+              )}
             </div>
           )}
         </div>
@@ -1045,35 +1334,60 @@ export default function ReportsView() {
          ========================================================================= */}
       {!loading && activeReport === 'stock' && valData && (
         <div className="space-y-4 animate-in fade-in duration-200">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-            <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)]">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">
-                Total Nilai Persediaan
-              </span>
-              <div className="text-2xl sm:text-3xl font-black text-[#00D29E] tabular-nums tracking-tight">
+          {/* Stock Valuation Summary Cards: Satu Baris Kompak Anti-Scroll */}
+          <div className="grid grid-cols-3 gap-2 sm:gap-4">
+            {/* Box 1: Total Nilai Persediaan */}
+            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+              <div className="flex items-center justify-between mb-1 gap-1">
+                <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
+                  Nilai Stok
+                </span>
+                <div className="w-5 h-5 sm:w-7 sm:h-7 rounded-lg sm:rounded-xl bg-emerald-50 text-[#00D29E] flex items-center justify-center shrink-0">
+                  <Package className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
+                </div>
+              </div>
+              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-[#00D29E] tabular-nums tracking-tight truncate">
                 {formatCurrency(valData.totalValuation)}
               </div>
-              <div className="text-xs text-slate-400 mt-1 font-medium">Nilai aset komoditas riil</div>
+              <div className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
+                Nilai aset persediaan
+              </div>
             </div>
 
-            <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)]">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">
-                Jumlah Komoditas
-              </span>
-              <div className="text-2xl sm:text-3xl font-black text-[#071A24] tabular-nums tracking-tight">
+            {/* Box 2: Jumlah Komoditas */}
+            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+              <div className="flex items-center justify-between mb-1 gap-1">
+                <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
+                  Total Komoditas
+                </span>
+                <div className="w-5 h-5 sm:w-7 sm:h-7 rounded-lg sm:rounded-xl bg-slate-100 text-[#071A24] flex items-center justify-center shrink-0">
+                  <Layers className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
+                </div>
+              </div>
+              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-[#071A24] tabular-nums tracking-tight truncate">
                 {valData.items?.length || 0} Barang
               </div>
-              <div className="text-xs text-slate-400 mt-1 font-medium">Terdaftar di katalog gudang</div>
+              <div className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
+                Terdaftar di gudang
+              </div>
             </div>
 
-            <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)]">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">
-                Metode Penilaian
-              </span>
-              <div className="text-lg sm:text-xl font-black text-[#071A24]">
-                HPP Moving Average
+            {/* Box 3: Metode Penilaian */}
+            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+              <div className="flex items-center justify-between mb-1 gap-1">
+                <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
+                  Metode HPP
+                </span>
+                <div className="w-5 h-5 sm:w-7 sm:h-7 rounded-lg sm:rounded-xl bg-cyan-50 text-cyan-700 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
+                </div>
               </div>
-              <div className="text-xs text-slate-400 mt-1 font-medium">Otomatis saat stok masuk</div>
+              <div className="text-xs min-[360px]:text-sm sm:text-xl lg:text-2xl font-black text-[#071A24] tracking-tight truncate">
+                Moving Avg
+              </div>
+              <div className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
+                Otomatis saat masuk
+              </div>
             </div>
           </div>
 
