@@ -7,7 +7,7 @@ export const useAuthStore = create((set, get) => ({
   session: null,
   loading: true,
   isConfigured: isSupabaseConfigured,
-  isGuest: false,
+  isGuest: true,
   authError: null,
 
   initializeAuth: async () => {
@@ -27,8 +27,7 @@ export const useAuthStore = create((set, get) => ({
         // Auto sync data on login
         syncFromSupabase();
       } else {
-        const savedGuest = localStorage.getItem('bang_andi_guest_mode') === 'true';
-        set({ user: null, session: null, loading: false, isGuest: savedGuest });
+        set({ user: null, session: null, loading: false, isGuest: true });
       }
 
       // Listen for auth changes
