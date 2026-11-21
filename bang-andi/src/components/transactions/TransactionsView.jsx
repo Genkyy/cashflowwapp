@@ -71,6 +71,7 @@ export default function TransactionsView() {
 
   // 1. Live Queries
   const transactions = useLiveQuery(() => db.transactions.toArray(), [], []);
+  const installments = useLiveQuery(() => db.installments ? db.installments.toArray() : [], [], []);
   const accounts = useLiveQuery(() => db.accounts.toArray(), [], []);
   const contacts = useLiveQuery(() => db.contacts.toArray(), [], []);
   const items = useLiveQuery(() => db.items.toArray(), [], []);
@@ -89,7 +90,10 @@ export default function TransactionsView() {
   const [copiedInvoice, setCopiedInvoice] = useState(false);
 
   // Dynamic count of secondary active filters
-  const activeFilterCount = (filterPayment !== 'all' ? 1 : 0) + (sortBy !== 'newest' ? 1 : 0);
+  const activeFilterCount =
+    (filterPayment !== 'all' ? 1 : 0) +
+    (sortBy !== 'newest' ? 1 : 0) +
+    (selectedPeriod !== 'this_month' ? 1 : 0);
 
   const handleResetFilters = () => {
     setSelectedPeriod('this_month');
@@ -135,7 +139,7 @@ export default function TransactionsView() {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
 
-  // Sync default type
+  // Sync default type and ensure mainTab switches to transactions when form is triggered
   useEffect(() => {
     if (defaultTransactionType) {
       setTxType(defaultTransactionType);
@@ -147,6 +151,9 @@ export default function TransactionsView() {
             : 'transfer'
       );
     }
+    if (showTransactionForm) {
+      setMainTab('transactions');
+    }
   }, [defaultTransactionType, showTransactionForm]);
 
   // Set default account when accounts loaded
@@ -156,7 +163,7 @@ export default function TransactionsView() {
     }
   }, [accounts, accountId]);
 
-  // Quick stats calculation
+  // Quick stats calculation dynamically reacting to selectedPeriod
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
@@ -168,18 +175,71 @@ export default function TransactionsView() {
     let unpaidCount = 0;
     let totalCount = 0;
 
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+    const lastMonthDate = new Date(currentYear, currentMonth - 1, 1);
+    const lastMonth = lastMonthDate.getMonth();
+    const lastMonthYear = lastMonthDate.getFullYear();
+
+    const checkPeriodMatch = (dateStr) => {
+      if (!dateStr) return false;
+      const d = new Date(dateStr);
+      if (selectedPeriod === 'this_month') {
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      }
+      if (selectedPeriod === 'last_month') {
+        return d.getMonth() === lastMonth && d.getFullYear() === lastMonthYear;
+      }
+      if (selectedPeriod === 'last_30_days') {
+        return d.getTime() >= thirtyDaysAgo.getTime();
+      }
+      return true; // 'all'
+    };
+
+    // Group installments by transaction_id to track exact cash in/out dates
+    const installmentsByTx = new Map();
+    (installments || []).forEach((inst) => {
+      if (!installmentsByTx.has(inst.transaction_id)) {
+        installmentsByTx.set(inst.transaction_id, []);
+      }
+      installmentsByTx.get(inst.transaction_id).push(inst);
+    });
+
     (transactions || []).forEach((t) => {
       if (t.status === 'void') return;
       totalCount++;
-      const tDate = new Date(t.date);
-      const isThisMonth = tDate.getMonth() === currentMonth && tDate.getFullYear() === currentYear;
 
-      if (t.type === 'income') {
-        if (isThisMonth) income += Number(t.total_amount) || 0;
-      } else if (t.type === 'expense' && t.sub_type !== 'transfer') {
-        if (isThisMonth) expense += Number(t.total_amount) || 0;
+      const txInstList = installmentsByTx.get(t.id);
+
+      if (t.type !== 'transfer') {
+        if (txInstList && txInstList.length > 0) {
+          // If transaction has installment records (DP + subsequent payments)
+          txInstList.forEach((inst) => {
+            if (checkPeriodMatch(inst.date)) {
+              const amt = Number(inst.amount) || 0;
+              if (t.type === 'income') {
+                income += amt;
+              } else if (t.type === 'expense' && t.sub_type !== 'transfer') {
+                expense += amt;
+              }
+            }
+          });
+        } else {
+          // Direct cash payment without separate installments record
+          if (checkPeriodMatch(t.date)) {
+            const paid = Number(t.paid_amount) || 0;
+            if (t.type === 'income') {
+              income += paid;
+            } else if (t.type === 'expense' && t.sub_type !== 'transfer') {
+              expense += paid;
+            }
+          }
+        }
       }
 
+      // Unpaid pending receivables / payables tracking
       if (t.payment_status !== 'paid') {
         const remaining = (Number(t.total_amount) || 0) - (Number(t.paid_amount) || 0);
         if (remaining > 0) {
@@ -197,7 +257,7 @@ export default function TransactionsView() {
       unpaidCount,
       totalCount
     };
-  }, [transactions, currentMonth, currentYear]);
+  }, [transactions, installments, selectedPeriod, currentMonth, currentYear]);
 
   // Map contacts for fast lookup
   const contactMap = useMemo(() => {
@@ -308,16 +368,26 @@ export default function TransactionsView() {
 
   // Filtered & Sorted Transactions (Bank Timeline Style)
   const filteredTransactions = useMemo(() => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+    const lastMonthDate = new Date(currentYear, currentMonth - 1, 1);
+    const lastMonth = lastMonthDate.getMonth();
+    const lastMonthYear = lastMonthDate.getFullYear();
+
     return (transactions || [])
       .filter((tx) => {
         // Period filter
         if (selectedPeriod === 'this_month') {
           const tDate = new Date(tx.date);
           if (tDate.getMonth() !== currentMonth || tDate.getFullYear() !== currentYear) return false;
+        } else if (selectedPeriod === 'last_month') {
+          const tDate = new Date(tx.date);
+          if (tDate.getMonth() !== lastMonth || tDate.getFullYear() !== lastMonthYear) return false;
         } else if (selectedPeriod === 'last_30_days') {
           const tDate = new Date(tx.date);
-          const diffDays = (now.getTime() - tDate.getTime()) / (1000 * 3600 * 24);
-          if (diffDays > 30 || diffDays < 0) return false;
+          if (tDate.getTime() < thirtyDaysAgo.getTime()) return false;
         }
 
         // Type filter
@@ -358,7 +428,7 @@ export default function TransactionsView() {
         }
         return 0;
       });
-  }, [transactions, selectedPeriod, filterType, filterPayment, search, sortBy, contactMap, currentMonth, currentYear, now]);
+  }, [transactions, selectedPeriod, filterType, filterPayment, search, sortBy, contactMap, currentMonth, currentYear]);
 
   // Anti-Lag Pagination: 20 items initial, reset on any filter/search change
   const {
@@ -505,17 +575,18 @@ export default function TransactionsView() {
           </span>
 
           {/* Quick Period Selector */}
-          <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-2xl">
+          <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-2xl overflow-x-auto max-w-full no-scrollbar">
             {[
               { id: 'all', label: 'Semua' },
               { id: 'this_month', label: 'Bulan Ini' },
+              { id: 'last_month', label: 'Bulan Lalu' },
               { id: 'last_30_days', label: '30 Hari' },
             ].map((p) => (
               <button
                 key={p.id}
                 type="button"
                 onClick={() => setSelectedPeriod(p.id)}
-                className={`px-3 py-1 rounded-xl text-xs font-bold transition cursor-pointer ${
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
                   selectedPeriod === p.id
                     ? 'bg-[#071A24] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -663,6 +734,24 @@ export default function TransactionsView() {
           })}
 
           {/* Active Filter Removable Tags */}
+          {selectedPeriod !== 'this_month' && (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 min-h-[34px] rounded-2xl bg-amber-50 text-amber-900 border border-amber-200 text-xs font-semibold shrink-0">
+              <span>
+                {selectedPeriod === 'all' && 'Periode: Semua'}
+                {selectedPeriod === 'last_month' && 'Periode: Bulan Lalu'}
+                {selectedPeriod === 'last_30_days' && 'Periode: 30 Hari'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedPeriod('this_month')}
+                className="hover:bg-amber-200/60 p-0.5 rounded-full cursor-pointer ml-0.5"
+                title="Kembalikan ke bulan ini"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </span>
+          )}
+
           {filterPayment !== 'all' && (
             <span className="inline-flex items-center gap-1 px-2.5 py-1 min-h-[34px] rounded-2xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold shrink-0">
               <span>
@@ -1057,6 +1146,7 @@ export default function TransactionsView() {
                       <input
                         type="number"
                         inputMode="numeric"
+                        min="0"
                         value={it.unit_price}
                         onChange={(e) => handleItemChange(idx, 'unit_price', e.target.value)}
                         placeholder="Harga Rp"
@@ -1183,6 +1273,7 @@ export default function TransactionsView() {
                         <input
                           type="number"
                           inputMode="numeric"
+                          min="0"
                           value={dpAmount}
                           onChange={(e) => setDpAmount(e.target.value)}
                           placeholder="Contoh: 500000"
@@ -1536,7 +1627,50 @@ export default function TransactionsView() {
         size="sm"
       >
         <div className="space-y-5 p-1">
-          {/* 1. Status Pembayaran */}
+          {/* 1. Periode Waktu */}
+          <div>
+            <div className="flex items-center justify-between mb-2.5">
+              <label className="text-xs font-extrabold text-[#071A24] uppercase tracking-wider">
+                Periode Waktu
+              </label>
+              {selectedPeriod !== 'this_month' && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedPeriod('this_month')}
+                  className="text-[11px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { id: 'this_month', label: 'Bulan Ini' },
+                { id: 'last_month', label: 'Bulan Lalu' },
+                { id: 'last_30_days', label: '30 Hari Terakhir' },
+                { id: 'all', label: 'Semua Waktu' },
+              ].map((opt) => {
+                const isSelected = selectedPeriod === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setSelectedPeriod(opt.id)}
+                    className={`p-3 rounded-2xl text-xs font-bold text-left transition border cursor-pointer flex items-center justify-between ${
+                      isSelected
+                        ? 'bg-[#071A24] text-white border-[#071A24] shadow-xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200/80 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>{opt.label}</span>
+                    {isSelected && <Check className="w-3.5 h-3.5 text-[#00D29E]" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 2. Status Pembayaran */}
           <div>
             <div className="flex items-center justify-between mb-2.5">
               <label className="text-xs font-extrabold text-[#071A24] uppercase tracking-wider">
@@ -1578,7 +1712,7 @@ export default function TransactionsView() {
             </div>
           </div>
 
-          {/* 2. Urutkan Berdasarkan */}
+          {/* 3. Urutkan Berdasarkan */}
           <div>
             <div className="flex items-center justify-between mb-2.5">
               <label className="text-xs font-extrabold text-[#071A24] uppercase tracking-wider">
@@ -1625,6 +1759,7 @@ export default function TransactionsView() {
             <button
               type="button"
               onClick={() => {
+                setSelectedPeriod('this_month');
                 setFilterPayment('all');
                 setSortBy('newest');
               }}

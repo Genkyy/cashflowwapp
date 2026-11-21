@@ -88,9 +88,7 @@ export function exportToPDF(title, data = [], columns = [], filename = 'document
     })
   );
 
-  const tableFn = typeof doc.autoTable === 'function' ? doc.autoTable.bind(doc) : (autoTable.default || autoTable);
-
-  tableFn({
+  const tableOptions = {
     startY: 30,
     head: head,
     body: body,
@@ -109,7 +107,15 @@ export function exportToPDF(title, data = [], columns = [], filename = 'document
       fillColor: [248, 250, 252],
     },
     margin: { top: 30, left: 14, right: 14, bottom: 20 },
-  });
+  };
+
+  if (typeof doc.autoTable === 'function') {
+    doc.autoTable(tableOptions);
+  } else if (typeof autoTable === 'function') {
+    autoTable(doc, tableOptions);
+  } else if (autoTable && typeof autoTable.default === 'function') {
+    autoTable.default(doc, tableOptions);
+  }
 
   doc.save(filename.endsWith('.pdf') ? filename : `${filename}.pdf`);
 }

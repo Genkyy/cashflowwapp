@@ -76,6 +76,34 @@ export function useReports() {
       }
     }
 
+    // Fetch Stock Depreciation & Shrinkage Mutations (Kerugian Rusak/Pecah/Susut)
+    let stockMutations = await db.stock_mutations.where('type').equals('adjustment').toArray();
+    if (startDate) {
+      const startTime = new Date(startDate).getTime();
+      stockMutations = stockMutations.filter((m) => new Date(m.date).getTime() >= startTime);
+    }
+    if (endDate) {
+      const endTime = new Date(endDate).getTime();
+      stockMutations = stockMutations.filter((m) => new Date(m.date).getTime() <= endTime);
+    }
+
+    let totalDepreciationLoss = 0;
+    for (const mutation of stockMutations) {
+      const prevStock = Number(mutation.previous_stock) || 0;
+      const newStock = Number(mutation.new_stock) || 0;
+      if (prevStock > newStock) {
+        const item = itemMap.get(mutation.item_id);
+        const itemHPP = item ? (Number(item.hpp) || 0) : 0;
+        const lossQty = prevStock - newStock;
+        totalDepreciationLoss += Math.round(lossQty * itemHPP);
+      }
+    }
+
+    if (totalDepreciationLoss > 0) {
+      totalOperationalExpenses += totalDepreciationLoss;
+      expensesByCategory['Penyusutan & Kerusakan Stok'] = (expensesByCategory['Penyusutan & Kerusakan Stok'] || 0) + totalDepreciationLoss;
+    }
+
     // Fetch Capital Rotations (Proyek Rotasi Modal CV Amanah Barokah)
     let rotQuery = db.capital_rotations ? await db.capital_rotations.toArray() : [];
     let completedRotations = rotQuery.filter((r) => r.status === 'done');
@@ -100,15 +128,30 @@ export function useReports() {
     const rotationTotalCapital = completedRotations.reduce((sum, r) => sum + (Number(r.capital_amount) || 0), 0);
     const waitingModalTotal = waitingRotations.reduce((sum, r) => sum + (Number(r.capital_amount) || 0), 0);
 
-    // Attribute rotation profits to commodity breakdown if matched
+    // Attribute rotation turnover to commodity breakdown and total turnover
+    let rotationRevenue = 0;
+    let rotationCOGS = 0;
+
     completedRotations.forEach((r) => {
       const cName = (r.commodity || '').toLowerCase();
       const matched = COMMODITIES.find((c) => cName.includes(c.name.toLowerCase()));
+      const cap = Number(r.capital_amount) || 0;
+      const prof = Number(r.profit_amount) || 0;
+      const rev = cap + prof;
+
+      rotationRevenue += rev;
+      rotationCOGS += cap;
+
       if (matched && commodityBreakdown[matched.id]) {
-        commodityBreakdown[matched.id].revenue += Number(r.profit_amount) || 0;
-        commodityBreakdown[matched.id].grossProfit += Number(r.profit_amount) || 0;
+        commodityBreakdown[matched.id].revenue += rev;
+        commodityBreakdown[matched.id].cogs += cap;
+        commodityBreakdown[matched.id].grossProfit += prof;
       }
     });
+
+    // Synchronize Total Revenue and COGS (Retail + Rotation)
+    const combinedTotalRevenue = totalRevenue + rotationRevenue;
+    const combinedTotalCOGS = totalCOGS + rotationCOGS;
 
     // Finalize commodity net profit
     Object.values(commodityBreakdown).forEach((cb) => {
@@ -124,12 +167,15 @@ export function useReports() {
     const netProfit = grossProfit - totalOperationalExpenses;
 
     return {
-      totalRevenue,
-      totalCOGS,
+      totalRevenue: combinedTotalRevenue,
+      totalCOGS: combinedTotalCOGS,
+      retailRevenue: totalRevenue,
+      retailCOGS: totalCOGS,
       grossProfit, // Laba Bruto (Kotor)
       rotationGrossProfit, // Realisasi Profit Rotasi Modal
       rotationTotalCapital, // Total Modal Rotasi yang Sudah Cair
       waitingModalTotal, // Total Modal yang Masih Berjalan
+      totalDepreciationLoss, // Kerugian Penyusutan & Kerusakan
       completedRotationsCount: completedRotations.length,
       waitingRotationsCount: waitingRotations.length,
       totalOperationalExpenses,
@@ -141,59 +187,109 @@ export function useReports() {
   }, []);
 
   /**
-   * Cash Flow analysis per account or all accounts
+   * Cash Flow analysis per account or all accounts with exact installment & rotation dates
    */
   const getCashFlow = useCallback(async (startDate = null, endDate = null, accountId = null) => {
-    let transactions = await db.transactions.where('status').notEqual('void').toArray();
+    const startTime = startDate ? new Date(startDate).getTime() : null;
+    const endTime = endDate ? new Date(endDate).getTime() : null;
+    const targetAccountId = accountId ? (Number(accountId) || accountId) : null;
 
-    if (startDate) {
-      const startTime = new Date(startDate).getTime();
-      transactions = transactions.filter((t) => new Date(t.date).getTime() >= startTime);
-    }
-    if (endDate) {
-      const endTime = new Date(endDate).getTime();
-      transactions = transactions.filter((t) => new Date(t.date).getTime() <= endTime);
-    }
+    const allTx = await db.transactions.where('status').notEqual('void').toArray();
+    const allInstallments = await db.installments.toArray();
+    const allRotations = db.capital_rotations ? await db.capital_rotations.toArray() : [];
 
-    if (accountId) {
-      const targetId = Number(accountId) || accountId;
-      transactions = transactions.filter(
-        (t) =>
-          Number(t.account_id) === targetId ||
-          Number(t.to_account_id) === targetId
-      );
+    const txMap = new Map(allTx.map((t) => [t.id, t]));
+    const installmentsByTx = new Map();
+    for (const inst of allInstallments) {
+      if (!installmentsByTx.has(inst.transaction_id)) {
+        installmentsByTx.set(inst.transaction_id, []);
+      }
+      installmentsByTx.get(inst.transaction_id).push(inst);
     }
 
     let cashIn = 0;
     let cashOut = 0;
 
-    for (const tx of transactions) {
-      const paid = Number(tx.paid_amount) || 0;
-      if (tx.type === 'income') {
-        cashIn += paid;
-      } else if (tx.type === 'expense') {
-        cashOut += paid;
-      } else if (tx.type === 'transfer') {
-        const transferAmt = Number(tx.total_amount) || 0;
-        if (accountId) {
-          if (Number(tx.to_account_id) === (Number(accountId) || accountId)) {
-            cashIn += transferAmt;
+    // 1. Process transactions
+    for (const tx of allTx) {
+      const instList = installmentsByTx.get(tx.id);
+
+      if (tx.type === 'transfer') {
+        const txTime = new Date(tx.date).getTime();
+        const isInRange = (!startTime || txTime >= startTime) && (!endTime || txTime <= endTime);
+        if (isInRange) {
+          const amt = Number(tx.total_amount) || 0;
+          if (targetAccountId) {
+            if ((Number(tx.to_account_id) || tx.to_account_id) === targetAccountId) {
+              cashIn += amt;
+            }
+            if ((Number(tx.account_id) || tx.account_id) === targetAccountId) {
+              cashOut += amt;
+            }
           }
-          if (Number(tx.account_id) === (Number(accountId) || accountId)) {
-            cashOut += transferAmt;
+        }
+      } else if (instList && instList.length > 0) {
+        // Has explicit installment payment records (DP + subsequent payments)
+        for (const inst of instList) {
+          const instTime = new Date(inst.date).getTime();
+          const isInRange = (!startTime || instTime >= startTime) && (!endTime || instTime <= endTime);
+          const isAccMatch = !targetAccountId || (Number(inst.account_id) || inst.account_id) === targetAccountId;
+
+          if (isInRange && isAccMatch) {
+            const amt = Number(inst.amount) || 0;
+            if (tx.type === 'income') {
+              cashIn += amt;
+            } else if (tx.type === 'expense') {
+              cashOut += amt;
+            }
+          }
+        }
+      } else {
+        // Direct cash payment without separate installments
+        const txTime = new Date(tx.date).getTime();
+        const isInRange = (!startTime || txTime >= startTime) && (!endTime || txTime <= endTime);
+        const isAccMatch = !targetAccountId || (Number(tx.account_id) || tx.account_id) === targetAccountId;
+
+        if (isInRange && isAccMatch) {
+          const paid = Number(tx.paid_amount) || 0;
+          if (tx.type === 'income') {
+            cashIn += paid;
+          } else if (tx.type === 'expense') {
+            cashOut += paid;
           }
         }
       }
     }
 
-    // Add standalone installments not yet counted in paid_amount
-    // (Note: in our architecture, paid_amount already reflects initial payment, but any extra installments are recorded)
+    // 2. Process Capital Rotations Cash Flows
+    if (!targetAccountId) {
+      for (const rot of allRotations) {
+        if (rot.status === 'cancel') continue;
+
+        // Cash out on project disbursement (Modal Keluar)
+        const rotStartTime = new Date(rot.start_date || rot.created_at).getTime();
+        const isStartInRange = (!startTime || rotStartTime >= startTime) && (!endTime || rotStartTime <= endTime);
+        if (isStartInRange) {
+          cashOut += Number(rot.capital_amount) || 0;
+        }
+
+        // Cash in on project completion (Modal Kembali + Profit Cair)
+        if (rot.status === 'done' && rot.completion_date) {
+          const rotDoneTime = new Date(rot.completion_date).getTime();
+          const isDoneInRange = (!startTime || rotDoneTime >= startTime) && (!endTime || rotDoneTime <= endTime);
+          if (isDoneInRange) {
+            cashIn += (Number(rot.capital_amount) || 0) + (Number(rot.profit_amount) || 0);
+          }
+        }
+      }
+    }
+
     const netCashFlow = cashIn - cashOut;
 
     // Get current account balances
     let accounts = await db.accounts.toArray();
-    if (accountId) {
-      accounts = accounts.filter((a) => a.id === (Number(accountId) || accountId));
+    if (targetAccountId) {
+      accounts = accounts.filter((a) => (Number(a.id) || a.id) === targetAccountId);
     }
     const currentTotalBalance = accounts.reduce((acc, a) => acc + (Number(a.balance) || 0), 0);
 

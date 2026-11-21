@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useLiveQuery } from '../../hooks/useLiveQuery.js';
 import { db } from '../../lib/db.js';
 import { useAuthStore } from '../../lib/authStore.js';
@@ -14,6 +14,7 @@ import {
   Users,
   Wallet,
   Download,
+  Upload,
   RefreshCw,
   Plus,
   FileCode,
@@ -151,6 +152,9 @@ export default function SettingsView() {
     setConAddress('');
   };
 
+  const restoreInputRef = useRef(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+
   const handleExportBackup = async () => {
     const backupData = {
       version: '2.0.0',
@@ -163,8 +167,87 @@ export default function SettingsView() {
       transactions: await db.transactions.toArray(),
       transaction_items: await db.transaction_items.toArray(),
       stock_mutations: await db.stock_mutations.toArray(),
+      capital_rotations: db.capital_rotations ? await db.capital_rotations.toArray() : [],
+      operational_notes: await db.operational_notes.toArray(),
     };
-    exportToJSON(backupData, `backup_bang_andi_${new Date().toISOString().slice(0, 10)}.json`);
+    exportToJSON(backupData, `backup_amanah_barokah_${new Date().toISOString().slice(0, 10)}.json`);
+  };
+
+  const handleRestoreBackup = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!confirm('PERINGATAN: Memulihkan cadangan akan menggabungkan/memperbarui data di database lokal. Lanjutkan?')) {
+      e.target.value = '';
+      return;
+    }
+
+    setIsRestoring(true);
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+
+      if (!data || typeof data !== 'object') {
+        throw new Error('Format file cadangan JSON tidak valid.');
+      }
+
+      const tablesToLock = [
+        db.accounts,
+        db.contacts,
+        db.commodities,
+        db.items,
+        db.unit_conversions,
+        db.transactions,
+        db.transaction_items,
+        db.stock_mutations,
+        db.operational_notes,
+      ];
+      if (db.capital_rotations) {
+        tablesToLock.push(db.capital_rotations);
+      }
+
+      await db.transaction('rw', tablesToLock, async () => {
+        if (Array.isArray(data.accounts) && data.accounts.length > 0) {
+          await db.accounts.bulkPut(data.accounts);
+        }
+        if (Array.isArray(data.contacts) && data.contacts.length > 0) {
+          await db.contacts.bulkPut(data.contacts);
+        }
+        if (Array.isArray(data.commodities) && data.commodities.length > 0) {
+          await db.commodities.bulkPut(data.commodities);
+        }
+        if (Array.isArray(data.items) && data.items.length > 0) {
+          await db.items.bulkPut(data.items);
+        }
+        if (Array.isArray(data.unit_conversions) && data.unit_conversions.length > 0) {
+          await db.unit_conversions.bulkPut(data.unit_conversions);
+        }
+        if (Array.isArray(data.transactions) && data.transactions.length > 0) {
+          await db.transactions.bulkPut(data.transactions);
+        }
+        if (Array.isArray(data.transaction_items) && data.transaction_items.length > 0) {
+          await db.transaction_items.bulkPut(data.transaction_items);
+        }
+        if (Array.isArray(data.stock_mutations) && data.stock_mutations.length > 0) {
+          await db.stock_mutations.bulkPut(data.stock_mutations);
+        }
+        if (Array.isArray(data.capital_rotations) && data.capital_rotations.length > 0 && db.capital_rotations) {
+          await db.capital_rotations.bulkPut(data.capital_rotations);
+        }
+        if (Array.isArray(data.operational_notes) && data.operational_notes.length > 0) {
+          await db.operational_notes.bulkPut(data.operational_notes);
+        }
+      });
+
+      alert('Berhasil memulihkan cadangan data JSON!');
+      window.location.reload();
+    } catch (err) {
+      console.error('Error restore backup:', err);
+      alert(`Gagal memulihkan cadangan: ${err.message}`);
+    } finally {
+      setIsRestoring(false);
+      e.target.value = '';
+    }
   };
 
   return (
@@ -371,6 +454,39 @@ export default function SettingsView() {
               <ChevronRight className="w-4 h-4 text-slate-300" />
             </div>
           </div>
+
+          {/* Row: Impor / Restore Backup */}
+          <div
+            onClick={() => restoreInputRef.current?.click()}
+            className="p-4 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition cursor-pointer"
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                <Upload className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-[#0F172A] tracking-tight">
+                  Pulihkan Cadangan (Restore JSON)
+                </div>
+                <div className="text-xs text-[#64748B]">
+                  {isRestoring ? 'Sedang memulihkan data...' : 'Impor file cadangan JSON untuk pemulihan database'}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs font-bold text-amber-600">Pulihkan</span>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+            </div>
+          </div>
+
+          <input
+            type="file"
+            ref={restoreInputRef}
+            accept=".json,application/json"
+            onChange={handleRestoreBackup}
+            className="hidden"
+          />
         </div>
       </div>
 

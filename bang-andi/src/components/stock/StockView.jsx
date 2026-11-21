@@ -55,6 +55,7 @@ export default function StockView() {
   const commodities = useLiveQuery(() => db.commodities.toArray(), [], []);
   const conversions = useLiveQuery(() => db.unit_conversions.toArray(), [], []);
   const mutations = useLiveQuery(() => db.stock_mutations.toArray(), [], []);
+  const livestock = useLiveQuery(() => db.livestock_records ? db.livestock_records.toArray() : [], [], []);
 
   const isLoading = items === undefined || commodities === undefined;
 
@@ -71,6 +72,41 @@ export default function StockView() {
   const [adjustReason, setAdjustReason] = useState('Selisih Opname');
   const [adjustNotes, setAdjustNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // 4. Livestock Weight Modal State
+  const [weighingLivestock, setWeighingLivestock] = useState(null);
+  const [newWeight, setNewWeight] = useState('');
+  const [weightNotes, setWeightNotes] = useState('');
+  const [isWeighingSubmitting, setIsWeighingSubmitting] = useState(false);
+
+  const handleSaveWeight = async (e) => {
+    e.preventDefault();
+    if (!weighingLivestock || !newWeight) return;
+    const wNum = Number(newWeight) || 0;
+    if (wNum <= 0) return;
+
+    setIsWeighingSubmitting(true);
+    try {
+      const now = new Date();
+      await db.livestock_weights.add({
+        livestock_id: weighingLivestock.id,
+        weight: wNum,
+        date: now.toISOString(),
+        notes: weightNotes.trim() || 'Timbang bobot berkala',
+      });
+      await db.livestock_records.update(weighingLivestock.id, {
+        current_weight: wNum,
+        updated_at: now.toISOString(),
+      });
+      setWeighingLivestock(null);
+      setNewWeight('');
+      setWeightNotes('');
+    } catch (err) {
+      console.error('Error saving weight:', err);
+    } finally {
+      setIsWeighingSubmitting(false);
+    }
+  };
 
   // Lucide Icons category mapping
   const getCommodityIcon = (name = '') => {
@@ -147,13 +183,16 @@ export default function StockView() {
   // Filtered Items
   const filteredItems = useMemo(() => {
     return (items || []).filter((it) => {
-      // Category filter
+      // Category filter with enhanced flexible matching
       if (selectedCommodity !== 'all') {
         const selectedObj = uniqueCommodities.find((c) => String(c.id) === String(selectedCommodity));
         const itemCategoryName = (commodityMap.get(String(it.commodity_id)) || '').toLowerCase();
         if (selectedObj) {
           const targetName = selectedObj.name.toLowerCase();
-          if (itemCategoryName !== targetName && String(it.commodity_id) !== String(selectedCommodity)) {
+          const matchCommodityId = String(it.commodity_id) === String(selectedCommodity);
+          const matchCategoryName = itemCategoryName.includes(targetName);
+          const matchItemName = (it.name || '').toLowerCase().includes(targetName);
+          if (!matchCommodityId && !matchCategoryName && !matchItemName) {
             return false;
           }
         }
@@ -206,14 +245,22 @@ export default function StockView() {
     const curMonth = now.getMonth();
     const curYear = now.getFullYear();
 
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+    const lastMonthDate = new Date(curYear, curMonth - 1, 1);
+    const lastMonth = lastMonthDate.getMonth();
+    const lastMonthYear = lastMonthDate.getFullYear();
+
     return list.filter((m) => {
+      const mDate = new Date(m.date);
       if (mutationPeriod === 'this_month') {
-        const mDate = new Date(m.date);
         if (mDate.getMonth() !== curMonth || mDate.getFullYear() !== curYear) return false;
+      } else if (mutationPeriod === 'last_month') {
+        if (mDate.getMonth() !== lastMonth || mDate.getFullYear() !== lastMonthYear) return false;
       } else if (mutationPeriod === 'last_30_days') {
-        const mDate = new Date(m.date);
-        const diffDays = (now.getTime() - mDate.getTime()) / (1000 * 3600 * 24);
-        if (diffDays > 30 || diffDays < 0) return false;
+        if (mDate.getTime() < thirtyDaysAgo.getTime()) return false;
       }
       return true;
     });
@@ -621,17 +668,18 @@ export default function StockView() {
             </div>
 
             {/* Smart Default Period Selector (Bulan Ini active by default) */}
-            <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-2xl self-start sm:self-center">
+            <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-2xl self-start sm:self-center overflow-x-auto max-w-full no-scrollbar">
               {[
-                { id: 'this_month', label: 'Bulan Ini' },
-                { id: 'last_30_days', label: '30 Hari' },
                 { id: 'all', label: 'Semua' },
+                { id: 'this_month', label: 'Bulan Ini' },
+                { id: 'last_month', label: 'Bulan Lalu' },
+                { id: 'last_30_days', label: '30 Hari' },
               ].map((p) => (
                 <button
                   key={p.id}
                   type="button"
                   onClick={() => setMutationPeriod(p.id)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
                     mutationPeriod === p.id
                       ? 'bg-[#071A24] text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
@@ -760,44 +808,69 @@ export default function StockView() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {[
-              { tag: 'LMS-001', jenis: 'Sapi Limousin', bobot: '520 kg', status: 'Sehat', beli: 'Rp 18.500.000' },
-              { tag: 'LMS-002', jenis: 'Sapi Limousin', bobot: '485 kg', status: 'Sehat', beli: 'Rp 17.000.000' },
-              { tag: 'LMS-003', jenis: 'Sapi Limousin', bobot: '540 kg', status: 'Sehat', beli: 'Rp 18.000.000' },
-              { tag: 'DG-001', jenis: 'Domba Garut', bobot: '45 kg', status: 'Sehat', beli: 'Rp 3.500.000' },
-              { tag: 'DG-002', jenis: 'Domba Garut', bobot: '42 kg', status: 'Sehat', beli: 'Rp 3.200.000' },
-              { tag: 'DG-003', jenis: 'Domba Garut', bobot: '38 kg', status: 'Sehat', beli: 'Rp 3.000.000' },
-            ].map((ternak) => (
-              <div
-                key={ternak.tag}
-                className="bg-white rounded-3xl p-5 border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.02)] space-y-3"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-black text-[#071A24] text-sm flex items-center gap-1.5">
-                    <Tag className="w-4 h-4 text-[#00D29E]" />
-                    <span>Tag: {ternak.tag}</span>
-                  </span>
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-[#00D29E] border border-emerald-200">
-                    {ternak.status}
-                  </span>
-                </div>
+            {(livestock && livestock.length > 0 ? livestock : [
+              { id: '1', tag_number: 'LMS-001', current_weight: 520, status: 'active', notes: 'Sapi Limousin Pejantan' },
+              { id: '2', tag_number: 'LMS-002', current_weight: 485, status: 'active', notes: 'Sapi Limousin Indukan' },
+              { id: '3', tag_number: 'LMS-003', current_weight: 540, status: 'active', notes: 'Sapi Limousin Pejantan' },
+              { id: '4', tag_number: 'DG-001', current_weight: 45, status: 'active', notes: 'Domba Garut Super' },
+              { id: '5', tag_number: 'DG-002', current_weight: 42, status: 'active', notes: 'Domba Garut Sehat' },
+              { id: '6', tag_number: 'DG-003', current_weight: 38, status: 'active', notes: 'Domba Garut Bobot Siap' },
+            ]).map((ternak) => {
+              const tag = ternak.tag_number || ternak.tag || 'TAG';
+              const jenis = tag.startsWith('LMS') ? 'Sapi Limousin' : tag.startsWith('DG') ? 'Domba Garut' : 'Hewan Ternak';
+              const statusLabel = ternak.status === 'active' || ternak.status === 'Sehat' ? 'Sehat' : ternak.status;
 
-                <div className="p-3 bg-slate-50/80 rounded-2xl space-y-1.5 text-xs border border-slate-100">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500 font-medium">Jenis:</span>
-                    <strong className="text-[#071A24] font-bold">{ternak.jenis}</strong>
+              return (
+                <div
+                  key={ternak.id || tag}
+                  className="bg-white rounded-3xl p-5 border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.02)] space-y-3 flex flex-col justify-between"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-black text-[#071A24] text-sm flex items-center gap-1.5">
+                        <Tag className="w-4 h-4 text-[#00D29E]" />
+                        <span>Tag: {tag}</span>
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-[#00D29E] border border-emerald-200">
+                        {statusLabel}
+                      </span>
+                    </div>
+
+                    <div className="p-3 bg-slate-50/80 rounded-2xl space-y-1.5 text-xs border border-slate-100">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-medium">Jenis:</span>
+                        <strong className="text-[#071A24] font-bold">{jenis}</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-medium">Bobot Terkini:</span>
+                        <strong className="text-[#00D29E] font-black tabular-nums">
+                          {ternak.current_weight || ternak.bobot || 0} kg
+                        </strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-medium">Catatan / Silsilah:</span>
+                        <span className="font-semibold text-slate-700 truncate max-w-[150px]">
+                          {ternak.notes || 'Pejantan/Indukan Sehat'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500 font-medium">Bobot Terkini:</span>
-                    <strong className="text-[#00D29E] font-black tabular-nums">{ternak.bobot}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500 font-medium">Harga Beli Awal:</span>
-                    <span className="font-semibold text-slate-700 tabular-nums">{ternak.beli}</span>
-                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWeighingLivestock(ternak);
+                      setNewWeight(String(ternak.current_weight || ''));
+                      setWeightNotes('');
+                    }}
+                    className="w-full py-2 rounded-xl bg-slate-100 hover:bg-[#071A24] hover:text-white text-slate-700 font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Scale className="w-3.5 h-3.5 text-[#00D29E]" />
+                    <span>Timbang Bobot Berkala</span>
+                  </button>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -888,6 +961,85 @@ export default function StockView() {
               >
                 <Check className="w-4 h-4 text-[#00D29E] stroke-[3]" />
                 <span>{isSubmitting ? 'Menyimpan...' : 'Simpan Penyesuaian'}</span>
+              </button>
+            </div>
+          </form>
+        )}
+      </BottomSheet>
+
+      {/* =========================================================================
+          LIVESTOCK WEIGHING MODAL / BOTTOM SHEET
+         ========================================================================= */}
+      <BottomSheet
+        isOpen={!!weighingLivestock}
+        onClose={() => setWeighingLivestock(null)}
+        title={
+          <div className="flex items-center gap-2.5 text-[#071A24]">
+            <div className="w-7 h-7 rounded-xl bg-[#00D29E]/20 text-[#00D29E] flex items-center justify-center">
+              <Scale className="w-4 h-4 stroke-[2.5]" />
+            </div>
+            <span className="font-extrabold text-base">
+              Timbang Bobot: Tag {weighingLivestock?.tag_number}
+            </span>
+          </div>
+        }
+        size="md"
+      >
+        {weighingLivestock && (
+          <form onSubmit={handleSaveWeight} className="space-y-4">
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 text-xs text-slate-600 flex items-center justify-between">
+              <span>Bobot tercatat sebelumnya:</span>
+              <strong className="text-[#071A24] font-black text-sm tabular-nums">
+                {weighingLivestock.current_weight || 0} kg
+              </strong>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#071A24] mb-1.5">
+                Bobot Baru Hasil Timbangan (kg)
+              </label>
+              <input
+                type="number"
+                step="any"
+                min="1"
+                inputMode="decimal"
+                value={newWeight}
+                onChange={(e) => setNewWeight(e.target.value)}
+                placeholder="Contoh: 535"
+                className="input-field tabular-nums rounded-2xl border-slate-200/80 text-sm font-bold"
+                required
+                autoFocus
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#071A24] mb-1.5">
+                Catatan Timbangan (Kondisi Kesehatan / Pakan)
+              </label>
+              <input
+                type="text"
+                value={weightNotes}
+                onChange={(e) => setWeightNotes(e.target.value)}
+                placeholder="Contoh: Pertumbuhan sehat, pakan konsentrat lancar"
+                className="input-field rounded-2xl border-slate-200/80"
+              />
+            </div>
+
+            <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setWeighingLivestock(null)}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={isWeighingSubmitting}
+                className="w-full sm:w-auto px-6 py-2.5 rounded-2xl bg-[#071A24] hover:bg-[#0B2533] text-white font-bold text-xs shadow-xs transition ios-spring-tap cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Check className="w-4 h-4 text-[#00D29E] stroke-[3]" />
+                <span>{isWeighingSubmitting ? 'Menyimpan...' : 'Simpan Bobot Baru'}</span>
               </button>
             </div>
           </form>

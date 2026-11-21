@@ -276,21 +276,39 @@ export function useTransactions() {
           });
         }
 
-        // Reverse account balances
-        const totalPaid = Number(tx.paid_amount) || 0;
-        if (tx.account_id && totalPaid > 0) {
-          const acc = await db.accounts.get(Number(tx.account_id) || tx.account_id);
-          if (acc) {
-            let balanceDelta = 0;
-            if (tx.type === 'income') {
-              balanceDelta = -totalPaid;
-            } else if (tx.type === 'expense') {
-              balanceDelta = totalPaid;
+        // Reverse account balances with exact account-per-installment precision
+        const relatedInstallments = await db.installments.where('transaction_id').equals(tx.id).toArray();
+        if (relatedInstallments.length > 0) {
+          for (const inst of relatedInstallments) {
+            const instAccId = inst.account_id || tx.account_id;
+            const instAmt = Number(inst.amount) || 0;
+            if (instAccId && instAmt > 0) {
+              const acc = await db.accounts.get(Number(instAccId) || instAccId);
+              if (acc) {
+                const balanceDelta = tx.type === 'income' ? -instAmt : instAmt;
+                await db.accounts.update(acc.id, {
+                  balance: (Number(acc.balance) || 0) + balanceDelta,
+                  updated_at: now.toISOString(),
+                });
+              }
             }
-            await db.accounts.update(acc.id, {
-              balance: (Number(acc.balance) || 0) + balanceDelta,
-              updated_at: now.toISOString(),
-            });
+          }
+        } else {
+          const totalPaid = Number(tx.paid_amount) || 0;
+          if (tx.account_id && totalPaid > 0) {
+            const acc = await db.accounts.get(Number(tx.account_id) || tx.account_id);
+            if (acc) {
+              let balanceDelta = 0;
+              if (tx.type === 'income') {
+                balanceDelta = -totalPaid;
+              } else if (tx.type === 'expense') {
+                balanceDelta = totalPaid;
+              }
+              await db.accounts.update(acc.id, {
+                balance: (Number(acc.balance) || 0) + balanceDelta,
+                updated_at: now.toISOString(),
+              });
+            }
           }
         }
 

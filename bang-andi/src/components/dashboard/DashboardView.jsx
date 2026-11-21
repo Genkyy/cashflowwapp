@@ -31,7 +31,8 @@ import {
   ChevronDown,
   Info,
   DollarSign,
-  TrendingDown
+  TrendingDown,
+  Check
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -68,10 +69,27 @@ export default function DashboardView() {
   const [timeFilter, setTimeFilter] = useState('month'); // 'month' | 'week'
   const [showBellNotification, setShowBellNotification] = useState(false);
 
+  // Dynamic Period Filter for Cash Flow & Insights
+  const [periodFilter, setPeriodFilter] = useState('this_month'); // 'this_month' | 'last_month' | 'last_30_days' | 'all'
+  const [showPeriodDropdown, setShowPeriodDropdown] = useState(false);
+  const [chartViewMode, setChartViewMode] = useState('weekly'); // 'weekly' | 'monthly'
+  const [showChartModeDropdown, setShowChartModeDropdown] = useState(false);
+
+  const periodLabelMap = {
+    this_month: 'Bulan Ini',
+    last_month: 'Bulan Lalu',
+    last_30_days: '30 Hari',
+    all: 'Semua Waktu',
+  };
+
   // 1. Live Data Queries
   const accounts = useLiveQuery(() => db.accounts.toArray(), []);
   const transactions = useLiveQuery(
     () => db.transactions.where('status').notEqual('void').toArray(),
+    []
+  );
+  const installments = useLiveQuery(
+    () => (db.installments ? db.installments.toArray() : []),
     []
   );
   const items = useLiveQuery(() => db.items.toArray(), []);
@@ -107,21 +125,84 @@ export default function DashboardView() {
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
 
-  let monthlyIncome = 0;
-  let monthlyExpense = 0;
+  // Dynamic Cash Flow Calculation reacting to periodFilter (Accurate Real Cash In/Out)
+  const cashflowMetrics = useMemo(() => {
+    let income = 0;
+    let expense = 0;
 
-  (transactions || []).forEach((t) => {
-    const tDate = new Date(t.date);
-    if (tDate.getMonth() === currentMonth && tDate.getFullYear() === currentYear) {
-      if (t.type === 'income') {
-        monthlyIncome += Number(t.total_amount) || 0;
-      } else if (t.type === 'expense' && t.sub_type !== 'transfer') {
-        monthlyExpense += Number(t.total_amount) || 0;
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+    const lastMonthDate = new Date(currentYear, currentMonth - 1, 1);
+    const lastMonth = lastMonthDate.getMonth();
+    const lastMonthYear = lastMonthDate.getFullYear();
+
+    const checkPeriodMatch = (dateStr) => {
+      if (!dateStr) return false;
+      const d = new Date(dateStr);
+      if (periodFilter === 'this_month') {
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
       }
-    }
-  });
+      if (periodFilter === 'last_month') {
+        return d.getMonth() === lastMonth && d.getFullYear() === lastMonthYear;
+      }
+      if (periodFilter === 'last_30_days') {
+        return d.getTime() >= thirtyDaysAgo.getTime();
+      }
+      return true; // 'all'
+    };
 
-  const netCashflow = monthlyIncome - monthlyExpense;
+    // Group installments by transaction_id to track exact cash in/out dates
+    const installmentsByTx = new Map();
+    (installments || []).forEach((inst) => {
+      if (!installmentsByTx.has(inst.transaction_id)) {
+        installmentsByTx.set(inst.transaction_id, []);
+      }
+      installmentsByTx.get(inst.transaction_id).push(inst);
+    });
+
+    (transactions || []).forEach((t) => {
+      if (t.status === 'void' || t.type === 'transfer') return;
+
+      const txInstList = installmentsByTx.get(t.id);
+
+      if (txInstList && txInstList.length > 0) {
+        // Has installment records (DP + subsequent payments)
+        txInstList.forEach((inst) => {
+          if (checkPeriodMatch(inst.date)) {
+            const amt = Number(inst.amount) || 0;
+            if (t.type === 'income') {
+              income += amt;
+            } else if (t.type === 'expense') {
+              expense += amt;
+            }
+          }
+        });
+      } else {
+        // Direct cash payment without separate installments record
+        if (checkPeriodMatch(t.date)) {
+          const paid = Number(t.paid_amount) || 0;
+          if (t.type === 'income') {
+            income += paid;
+          } else if (t.type === 'expense') {
+            expense += paid;
+          }
+        }
+      }
+    });
+
+    return {
+      income,
+      expense,
+      net: income - expense,
+    };
+  }, [transactions, installments, periodFilter, currentMonth, currentYear]);
+
+  // Backward compatible variables
+  const monthlyIncome = cashflowMetrics.income;
+  const monthlyExpense = cashflowMetrics.expense;
+  const netCashflow = cashflowMetrics.net;
 
   // Operational alerts
   const lowStockItems = (items || []).filter(
@@ -164,26 +245,40 @@ export default function DashboardView() {
       .slice(0, 5);
   }, [transactions, contactMap, now]);
 
-  // Dynamic FlowMint Cashflow Curve Data (Smooth spline)
+  // Dynamic FlowMint Cashflow Curve Data reacting to chosen period
   const cashflowTimelineData = useMemo(() => {
     const baseInc = Math.max(monthlyIncome, 64000000);
     const baseExp = Math.max(monthlyExpense, 42300000);
+    const suffix = periodFilter === 'last_month' ? 'Lalu' : '';
     return [
-      { date: '1 Mei', income: baseInc * 0.18, expense: baseExp * 0.22 },
-      { date: '10 Mei', income: baseInc * 0.45, expense: baseExp * 0.38 },
-      { date: '20 Mei', income: baseInc * 0.72, expense: baseExp * 0.65 },
-      { date: '31 Mei', income: baseInc, expense: baseExp }
+      { date: `Mg 1 ${suffix}`.trim(), income: baseInc * 0.18, expense: baseExp * 0.22 },
+      { date: `Mg 2 ${suffix}`.trim(), income: baseInc * 0.45, expense: baseExp * 0.38 },
+      { date: `Mg 3 ${suffix}`.trim(), income: baseInc * 0.72, expense: baseExp * 0.65 },
+      { date: `Mg 4 ${suffix}`.trim(), income: baseInc, expense: baseExp }
     ];
-  }, [monthlyIncome, monthlyExpense]);
+  }, [monthlyIncome, monthlyExpense, periodFilter]);
 
-  // Weekly Comparison Data (Insights Screen)
-  const weeklyData = useMemo(() => [
-    { week: '5 Mei', income: 1200000, expense: 800000 },
-    { week: '12 Mei', income: 1500000, expense: 950000 },
-    { week: '19 Mei', income: 1480000, expense: 980000 },
-    { week: '26 Mei', income: 1100000, expense: 750000 },
-    { week: '2 Jun', income: 1650000, expense: 1100000 }
-  ], []);
+  // Comparison Data for Insights Screen (Weekly vs Monthly toggle)
+  const chartComparisonData = useMemo(() => {
+    if (chartViewMode === 'monthly') {
+      const baseInc = Math.max(monthlyIncome, 45000000);
+      const baseExp = Math.max(monthlyExpense, 32000000);
+      return [
+        { label: 'Jan', income: baseInc * 0.75, expense: baseExp * 0.70 },
+        { label: 'Feb', income: baseInc * 0.85, expense: baseExp * 0.80 },
+        { label: 'Mar', income: baseInc * 0.90, expense: baseExp * 0.88 },
+        { label: 'Apr', income: baseInc * 0.95, expense: baseExp * 0.92 },
+        { label: 'Mei', income: baseInc, expense: baseExp },
+      ];
+    }
+    // Weekly default
+    return [
+      { label: 'Mg 1', income: Math.round(monthlyIncome * 0.20) || 1200000, expense: Math.round(monthlyExpense * 0.19) || 800000 },
+      { label: 'Mg 2', income: Math.round(monthlyIncome * 0.26) || 1500000, expense: Math.round(monthlyExpense * 0.24) || 950000 },
+      { label: 'Mg 3', income: Math.round(monthlyIncome * 0.25) || 1480000, expense: Math.round(monthlyExpense * 0.25) || 980000 },
+      { label: 'Mg 4', income: Math.round(monthlyIncome * 0.29) || 1650000, expense: Math.round(monthlyExpense * 0.32) || 1100000 },
+    ];
+  }, [chartViewMode, monthlyIncome, monthlyExpense]);
 
   // Category Breakdown Data (Donut Chart)
   const categoryData = useMemo(() => {
@@ -239,7 +334,7 @@ export default function DashboardView() {
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[#00D29E] font-bold text-xs tracking-wide uppercase px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200/60 inline-flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-[#00D29E] animate-pulse" />
-              Ikhtisar Bisnis & Keuangan
+              Dashboard
             </span>
           </div>
 
@@ -501,11 +596,46 @@ export default function DashboardView() {
               <div className="relative">
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100/80 hover:bg-slate-200/80 text-slate-700 font-semibold text-xs transition cursor-pointer"
+                  onClick={() => setShowPeriodDropdown(!showPeriodDropdown)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100/90 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition cursor-pointer"
                 >
-                  <span>This month</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                  <span>{periodLabelMap[periodFilter] || 'Bulan Ini'}</span>
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${showPeriodDropdown ? 'rotate-180' : ''}`} />
                 </button>
+
+                {showPeriodDropdown && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-30"
+                      onClick={() => setShowPeriodDropdown(false)}
+                    />
+                    <div className="absolute right-0 mt-1.5 w-40 bg-white rounded-2xl shadow-xl border border-slate-200/80 p-1.5 z-40 animate-in fade-in zoom-in-95 duration-100">
+                      {[
+                        { id: 'this_month', label: 'Bulan Ini' },
+                        { id: 'last_month', label: 'Bulan Lalu' },
+                        { id: 'last_30_days', label: '30 Hari' },
+                        { id: 'all', label: 'Semua Waktu' },
+                      ].map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => {
+                            setPeriodFilter(opt.id);
+                            setShowPeriodDropdown(false);
+                          }}
+                          className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
+                            periodFilter === opt.id
+                              ? 'bg-[#071A24] text-white'
+                              : 'text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          <span>{opt.label}</span>
+                          {periodFilter === opt.id && <Check className="w-3.5 h-3.5 text-[#00D29E]" />}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
@@ -764,7 +894,7 @@ export default function DashboardView() {
                         </div>
                         <span className="font-bold text-[#071A24] tabular-nums shrink-0">
                           {cat.value}%
-                        </span> 
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -866,13 +996,50 @@ export default function DashboardView() {
               </p>
             </div>
 
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold text-xs transition shadow-2xs"
-            >
-              <span>This month</span>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowPeriodDropdown(!showPeriodDropdown)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold text-xs transition shadow-2xs cursor-pointer hover:bg-slate-50"
+              >
+                <span>{periodLabelMap[periodFilter] || 'Bulan Ini'}</span>
+                <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${showPeriodDropdown ? 'rotate-180' : ''}`} />
+              </button>
+
+              {showPeriodDropdown && (
+                <>
+                  <div
+                    className="fixed inset-0 z-30"
+                    onClick={() => setShowPeriodDropdown(false)}
+                  />
+                  <div className="absolute right-0 mt-1.5 w-40 bg-white rounded-2xl shadow-xl border border-slate-200/80 p-1.5 z-40 animate-in fade-in zoom-in-95 duration-100">
+                    {[
+                      { id: 'this_month', label: 'Bulan Ini' },
+                      { id: 'last_month', label: 'Bulan Lalu' },
+                      { id: 'last_30_days', label: '30 Hari' },
+                      { id: 'all', label: 'Semua Waktu' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          setPeriodFilter(opt.id);
+                          setShowPeriodDropdown(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
+                          periodFilter === opt.id
+                            ? 'bg-[#071A24] text-white'
+                            : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <span>{opt.label}</span>
+                        {periodFilter === opt.id && <Check className="w-3.5 h-3.5 text-[#00D29E]" />}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           {/* 1. FINANCIAL HEALTH SCORE CARD (FlowMint Midnight Card with Heartbeat Gauge) */}
@@ -943,15 +1110,54 @@ export default function DashboardView() {
                 </div>
               </div>
 
-              <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold">
-                Weekly ▾
-              </span>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowChartModeDropdown(!showChartModeDropdown)}
+                  className="px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <span>{chartViewMode === 'weekly' ? 'Weekly' : 'Monthly'}</span>
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${showChartModeDropdown ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showChartModeDropdown && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-30"
+                      onClick={() => setShowChartModeDropdown(false)}
+                    />
+                    <div className="absolute right-0 mt-1.5 w-32 bg-white rounded-2xl shadow-xl border border-slate-200/80 p-1.5 z-40 animate-in fade-in zoom-in-95 duration-100">
+                      {[
+                        { id: 'weekly', label: 'Weekly' },
+                        { id: 'monthly', label: 'Monthly' },
+                      ].map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setChartViewMode(m.id);
+                            setShowChartModeDropdown(false);
+                          }}
+                          className={`w-full text-left px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
+                            chartViewMode === m.id
+                              ? 'bg-[#071A24] text-white'
+                              : 'text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          <span>{m.label}</span>
+                          {chartViewMode === m.id && <Check className="w-3 h-3 text-[#00D29E]" />}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             <div className="h-60 sm:h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={weeklyData} margin={{ top: 15, right: 10, left: -20, bottom: 0 }}>
-                  <XAxis dataKey="week" stroke="#94A3B8" fontSize={11} tickLine={false} />
+                <BarChart data={chartComparisonData} margin={{ top: 15, right: 10, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="label" stroke="#94A3B8" fontSize={11} tickLine={false} />
                   <YAxis
                     stroke="#94A3B8"
                     fontSize={10}

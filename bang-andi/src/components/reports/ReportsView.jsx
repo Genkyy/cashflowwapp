@@ -442,7 +442,10 @@ export default function ReportsView() {
           {/* Profit & Loss Flow Cards: Laba Bruto, Beban & Penyusutan, Laba Netto (Satu Baris Kompak Anti-Scroll) */}
           <div className="grid grid-cols-3 gap-2 sm:gap-4">
             {/* Box 1: Laba Bruto (Kotor) */}
-            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+            <div
+              title={`Laba Bruto: ${formatCurrency(plData.grossProfit)}`}
+              className="bg-white p-2 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0"
+            >
               <div className="flex items-center justify-between mb-1 gap-1">
                 <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
                   Laba Bruto
@@ -451,7 +454,7 @@ export default function ReportsView() {
                   <TrendingUp className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
                 </div>
               </div>
-              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-emerald-700 tabular-nums tracking-tight truncate">
+              <div className="text-[11px] min-[360px]:text-xs sm:text-xl lg:text-2xl font-black text-emerald-700 tabular-nums tracking-tight truncate">
                 +{formatCurrency(plData.grossProfit)}
               </div>
               <div className="text-[9px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
@@ -464,7 +467,10 @@ export default function ReportsView() {
             </div>
 
             {/* Box 2: Beban Operasional & Penyusutan */}
-            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+            <div
+              title={`Beban Operasional & Susut: ${formatCurrency(plData.totalOperationalExpenses)}`}
+              className="bg-white p-2 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0"
+            >
               <div className="flex items-center justify-between mb-1 gap-1">
                 <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
                   Beban & Susut
@@ -473,7 +479,7 @@ export default function ReportsView() {
                   <ArrowUpRight className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
                 </div>
               </div>
-              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-slate-800 tabular-nums tracking-tight truncate">
+              <div className="text-[11px] min-[360px]:text-xs sm:text-xl lg:text-2xl font-black text-slate-800 tabular-nums tracking-tight truncate">
                 {formatCurrency(plData.totalOperationalExpenses)}
               </div>
               <div className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
@@ -483,7 +489,8 @@ export default function ReportsView() {
 
             {/* Box 3: Laba Netto (Bersih) */}
             <div
-              className={`p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0 ${
+              title={`Laba Netto: ${formatCurrency(plData.netProfit)}`}
+              className={`p-2 sm:p-5 rounded-2xl sm:rounded-3xl border shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0 ${
                 plData.netProfit >= 0
                   ? 'bg-gradient-to-br from-[#F0FDF9] to-[#ECFDF5] border-[#A7F3D0]'
                   : 'bg-gradient-to-br from-[#FFF1F2] to-[#FFE4E6] border-[#FECDD3]'
@@ -510,7 +517,7 @@ export default function ReportsView() {
                 </div>
               </div>
               <div
-                className={`text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black tabular-nums tracking-tight truncate ${
+                className={`text-[11px] min-[360px]:text-xs sm:text-xl lg:text-2xl font-black tabular-nums tracking-tight truncate ${
                   plData.netProfit >= 0 ? 'text-[#00D29E]' : 'text-rose-600'
                 }`}
               >
@@ -768,7 +775,10 @@ export default function ReportsView() {
           {/* Cash Flow Summary Cards: Satu Baris Kompak Anti-Scroll */}
           <div className="grid grid-cols-3 gap-2 sm:gap-4">
             {/* Box 1: Total Kas Masuk */}
-            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+            <div
+              title={`Total Kas Masuk: ${formatCurrency(cfData.cashIn)}`}
+              className="bg-white p-2 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0"
+            >
               <div className="flex items-center justify-between mb-1 gap-1">
                 <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
                   Kas Masuk
@@ -777,7 +787,7 @@ export default function ReportsView() {
                   <ArrowDownLeft className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
                 </div>
               </div>
-              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-[#00D29E] tabular-nums tracking-tight truncate">
+              <div className="text-[11px] min-[360px]:text-xs sm:text-xl lg:text-2xl font-black text-[#00D29E] tabular-nums tracking-tight truncate">
                 +{formatCurrency(cfData.cashIn)}
               </div>
               <div className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
@@ -786,7 +796,10 @@ export default function ReportsView() {
             </div>
 
             {/* Box 2: Total Kas Keluar */}
-            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+            <div
+              title={`Total Kas Keluar: ${formatCurrency(cfData.cashOut)}`}
+              className="bg-white p-2 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0"
+            >
               <div className="flex items-center justify-between mb-1 gap-1">
                 <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
                   Kas Keluar
@@ -795,7 +808,7 @@ export default function ReportsView() {
                   <ArrowUpRight className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
                 </div>
               </div>
-              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-rose-600 tabular-nums tracking-tight truncate">
+              <div className="text-[11px] min-[360px]:text-xs sm:text-xl lg:text-2xl font-black text-rose-600 tabular-nums tracking-tight truncate">
                 -{formatCurrency(cfData.cashOut)}
               </div>
               <div className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
@@ -804,7 +817,10 @@ export default function ReportsView() {
             </div>
 
             {/* Box 3: Saldo Kas & Bank */}
-            <div className="bg-gradient-to-br from-[#071A24] to-[#0B2533] text-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-800 shadow-[0_4px_24px_rgba(0,0,0,0.06)] flex flex-col justify-between min-w-0">
+            <div
+              title={`Saldo Kas & Bank: ${formatCurrency(cfData.closingBalance)}`}
+              className="bg-gradient-to-br from-[#071A24] to-[#0B2533] text-white p-2 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-800 shadow-[0_4px_24px_rgba(0,0,0,0.06)] flex flex-col justify-between min-w-0"
+            >
               <div className="flex items-center justify-between mb-1 gap-1">
                 <span className="text-[10px] sm:text-xs font-bold text-slate-300 uppercase tracking-tight sm:tracking-wider truncate">
                   Saldo Kas
@@ -813,7 +829,7 @@ export default function ReportsView() {
                   <DollarSign className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
                 </div>
               </div>
-              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-[#00D29E] tabular-nums tracking-tight truncate">
+              <div className="text-[11px] min-[360px]:text-xs sm:text-xl lg:text-2xl font-black text-[#00D29E] tabular-nums tracking-tight truncate">
                 {formatCurrency(cfData.closingBalance)}
               </div>
               <div className="text-[9px] sm:text-xs text-slate-300 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
@@ -1337,7 +1353,10 @@ export default function ReportsView() {
           {/* Stock Valuation Summary Cards: Satu Baris Kompak Anti-Scroll */}
           <div className="grid grid-cols-3 gap-2 sm:gap-4">
             {/* Box 1: Total Nilai Persediaan */}
-            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+            <div
+              title={`Total Nilai Stok: ${formatCurrency(valData.totalValuation)}`}
+              className="bg-white p-2 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0"
+            >
               <div className="flex items-center justify-between mb-1 gap-1">
                 <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
                   Nilai Stok
@@ -1346,7 +1365,7 @@ export default function ReportsView() {
                   <Package className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
                 </div>
               </div>
-              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-[#00D29E] tabular-nums tracking-tight truncate">
+              <div className="text-[11px] min-[360px]:text-xs sm:text-xl lg:text-2xl font-black text-[#00D29E] tabular-nums tracking-tight truncate">
                 {formatCurrency(valData.totalValuation)}
               </div>
               <div className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
@@ -1355,7 +1374,10 @@ export default function ReportsView() {
             </div>
 
             {/* Box 2: Jumlah Komoditas */}
-            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+            <div
+              title={`Total Komoditas: ${valData.items?.length || 0} Barang`}
+              className="bg-white p-2 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0"
+            >
               <div className="flex items-center justify-between mb-1 gap-1">
                 <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
                   Total Komoditas
@@ -1364,7 +1386,7 @@ export default function ReportsView() {
                   <Layers className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
                 </div>
               </div>
-              <div className="text-xs min-[360px]:text-sm sm:text-2xl lg:text-3xl font-black text-[#071A24] tabular-nums tracking-tight truncate">
+              <div className="text-[11px] min-[360px]:text-xs sm:text-xl lg:text-2xl font-black text-[#071A24] tabular-nums tracking-tight truncate">
                 {valData.items?.length || 0} Barang
               </div>
               <div className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">
@@ -1373,7 +1395,10 @@ export default function ReportsView() {
             </div>
 
             {/* Box 3: Metode Penilaian */}
-            <div className="bg-white p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0">
+            <div
+              title="Metode HPP: Moving Average Otomatis"
+              className="bg-white p-2 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between min-w-0"
+            >
               <div className="flex items-center justify-between mb-1 gap-1">
                 <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-tight sm:tracking-wider truncate">
                   Metode HPP
@@ -1382,7 +1407,7 @@ export default function ReportsView() {
                   <Sparkles className="w-3 h-3 sm:w-4 sm:h-4 stroke-[2.5]" />
                 </div>
               </div>
-              <div className="text-xs min-[360px]:text-sm sm:text-xl lg:text-2xl font-black text-[#071A24] tracking-tight truncate">
+              <div className="text-[11px] min-[360px]:text-xs sm:text-xl lg:text-2xl font-black text-[#071A24] tracking-tight truncate">
                 Moving Avg
               </div>
               <div className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-medium truncate hidden min-[360px]:block">

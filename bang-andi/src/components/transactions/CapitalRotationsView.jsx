@@ -54,6 +54,7 @@ export default function CapitalRotationsView() {
 
   // 1. Filter & Search State
   const [filterStatus, setFilterStatus] = useState('all'); // all | waiting | done | cancel
+  const [filterCommodity, setFilterCommodity] = useState('all');
   const [search, setSearch] = useState('');
 
   // 2. Modals State
@@ -88,6 +89,11 @@ export default function CapitalRotationsView() {
       result = result.filter((r) => r.status === filterStatus);
     }
 
+    // Filter by commodity
+    if (filterCommodity !== 'all') {
+      result = result.filter((r) => (r.commodity || '').toLowerCase().includes(filterCommodity.toLowerCase()));
+    }
+
     // Filter by search query
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -103,7 +109,7 @@ export default function CapitalRotationsView() {
     result.sort((a, b) => new Date(b.start_date || b.created_at) - new Date(a.start_date || a.created_at));
 
     return result;
-  }, [rotations, filterStatus, search]);
+  }, [rotations, filterStatus, filterCommodity, search]);
 
   // Anti-Lag Pagination: 20 per view
   const {
@@ -113,7 +119,7 @@ export default function CapitalRotationsView() {
   } = usePagination(filteredRotations, {
     initialLimit: 20,
     step: 20,
-    resetDependencies: [filterStatus, search],
+    resetDependencies: [filterStatus, filterCommodity, search],
   });
 
   // Open Add Modal
@@ -163,6 +169,8 @@ export default function CapitalRotationsView() {
     const profNum = Number(profitAmount) || 0;
     if (capNum > 0 && profNum > 0) {
       setRoiPercentage(Number(((profNum / capNum) * 100).toFixed(2)));
+    } else if (capNum === 0) {
+      setRoiPercentage(0);
     }
   };
 
@@ -173,6 +181,8 @@ export default function CapitalRotationsView() {
     const profNum = Number(val) || 0;
     if (capNum > 0) {
       setRoiPercentage(Number(((profNum / capNum) * 100).toFixed(2)));
+    } else {
+      setRoiPercentage(0);
     }
   };
 
@@ -373,6 +383,38 @@ export default function CapitalRotationsView() {
             <Plus className="w-4 h-4 text-[#00D29E] stroke-[3]" />
             <span>+ Catat Proyek Rotasi</span>
           </button>
+        </div>
+
+        {/* Commodity Filter Chips */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+          <button
+            type="button"
+            onClick={() => setFilterCommodity('all')}
+            className={`px-3 py-1 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
+              filterCommodity === 'all'
+                ? 'bg-[#071A24] text-white shadow-xs'
+                : 'bg-slate-100/80 text-slate-600 hover:bg-slate-200/70'
+            }`}
+          >
+            Semua Komoditas
+          </button>
+          {COMMON_COMMODITIES.map((cName) => {
+            const isSel = filterCommodity === cName;
+            return (
+              <button
+                key={cName}
+                type="button"
+                onClick={() => setFilterCommodity(isSel ? 'all' : cName)}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
+                  isSel
+                    ? 'bg-[#00D29E] text-[#071A24] shadow-xs'
+                    : 'bg-slate-100/80 text-slate-600 hover:bg-slate-200/70'
+                }`}
+              >
+                {cName}
+              </button>
+            );
+          })}
         </div>
 
         {/* Search Bar */}
