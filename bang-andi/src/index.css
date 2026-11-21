@@ -1,0 +1,287 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #064E3B;
+  --color-primary-light: #065F46;
+  --color-primary-dark: #043927;
+  --color-accent: #D97706;
+  --color-accent-hover: #B45309;
+  --color-accent-light: #FEF3C7;
+  --color-surface: #FFFFFF;
+  --color-background: #F2F2F7;
+  --color-border: #E2E8F0;
+  --color-input-bg: #FFFFFF;
+  --color-text-primary: #0F172A;
+  --color-text-secondary: #64748B;
+  --color-text-tertiary: #94A3B8;
+  --color-text-on-primary: #ECFDF5;
+  --color-success: #059669;
+  --color-success-bg: #ECFDF5;
+  --color-success-text: #059669;
+  --color-warning: #D97706;
+  --color-warning-bg: #FFFBEB;
+  --color-warning-text: #B45309;
+  --color-danger: #DC2626;
+  --color-danger-bg: #FEF2F2;
+  --color-danger-text: #DC2626;
+  --color-muted: #64748B;
+  --color-muted-bg: #F1F5F9;
+  --color-muted-text: #475569;
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "tnum";
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: #F2F2F7;
+    color: #0F172A;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+}
+
+@layer components {
+
+  /* Apple HIG Safe Areas */
+  .safe-area-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px);
+  }
+
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  /* Apple HIG Touch Targets (Min 44x44px) */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Apple HIG Spring Micro-Interaction */
+  .ios-spring {
+    transition: all 200ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  .ios-spring-tap {
+    transition: transform 150ms cubic-bezier(0.32, 0.72, 0, 1), background-color 150ms ease;
+  }
+
+  .ios-spring-tap:active {
+    transform: scale(0.98);
+  }
+
+  /* Apple Inset Grouped Card */
+  .ios-card {
+    background-color: #FFFFFF;
+    border-radius: 1rem;
+    /* 16px */
+    border: 1px solid rgba(226, 232, 240, 0.8);
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+  }
+
+  .ios-grouped-list {
+    background-color: #FFFFFF;
+    border-radius: 1rem;
+    border: 1px solid rgba(226, 232, 240, 0.8);
+    overflow: hidden;
+  }
+
+  /* Apple Translucent Glassmorphism */
+  .ios-glass {
+    background-color: rgba(255, 255, 255, 0.82);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .ios-glass-dark {
+    background-color: rgba(6, 78, 59, 0.92);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  /* Buttons */
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    background-color: #D97706;
+    color: #FFFFFF;
+    font-weight: 700;
+    font-size: 0.875rem;
+    border-radius: 0.875rem;
+    padding: 0.625rem 1.25rem;
+    min-height: 44px;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    transition: all 180ms cubic-bezier(0.32, 0.72, 0, 1);
+    user-select: none;
+    cursor: pointer;
+  }
+
+  .btn-primary:hover {
+    background-color: #B45309;
+  }
+
+  .btn-primary:active {
+    background-color: #92400E;
+    transform: scale(0.98);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    background-color: #FFFFFF;
+    color: #0F172A;
+    font-weight: 600;
+    font-size: 0.875rem;
+    border-radius: 0.875rem;
+    padding: 0.625rem 1.125rem;
+    min-height: 44px;
+    border: 1px solid #E2E8F0;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.02);
+    transition: all 180ms cubic-bezier(0.32, 0.72, 0, 1);
+    user-select: none;
+    cursor: pointer;
+  }
+
+  .btn-secondary:hover {
+    background-color: #F8FAFC;
+    border-color: #CBD5E1;
+  }
+
+  .btn-secondary:active {
+    background-color: #F1F5F9;
+    transform: scale(0.98);
+  }
+
+  .input-field {
+    width: 100%;
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 0.875rem;
+    padding: 0.625rem 0.875rem;
+    min-height: 44px;
+    font-size: 0.875rem;
+    color: #0F172A;
+    transition: all 180ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  .input-field:focus {
+    outline: none;
+    background-color: #FFFFFF;
+    border-color: #D97706;
+    box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.15);
+  }
+
+  .input-field::placeholder {
+    color: #94A3B8;
+  }
+
+  /* Apple Segmented Control Container */
+  .ios-segmented {
+    display: flex;
+    align-items: center;
+    background-color: #E2E8F0;
+    padding: 3px;
+    border-radius: 0.75rem;
+    user-select: none;
+  }
+
+  .ios-segmented-item {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    border-radius: 0.625rem;
+    transition: all 180ms cubic-bezier(0.32, 0.72, 0, 1);
+    color: #64748B;
+    min-height: 36px;
+    cursor: pointer;
+  }
+
+  .ios-segmented-item.active {
+    background-color: #FFFFFF;
+    color: #0F172A;
+    font-weight: 700;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  }
+
+  /* Apple iOS Switch Toggle */
+  .ios-switch {
+    position: relative;
+    display: inline-block;
+    width: 48px;
+    height: 28px;
+    flex-shrink: 0;
+  }
+
+  .ios-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .ios-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background-color: #E2E8F0;
+    transition: 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+    border-radius: 9999px;
+  }
+
+  .ios-slider:before {
+    position: absolute;
+    content: "";
+    height: 22px;
+    width: 22px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  }
+
+  input:checked+.ios-slider {
+    background-color: #D97706;
+  }
+
+  input:checked+.ios-slider:before {
+    transform: translateX(20px);
+  }
+}

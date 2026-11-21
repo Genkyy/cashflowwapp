@@ -1,0 +1,10 @@
+{
+  "name": "cashflowapp",
+  "private": true,
+  "version": "2.0.0",
+  "scripts": {
+    "dev": "pnpm --dir bang-andi dev",
+    "build": "pnpm --dir bang-andi build",
+    "preview": "pnpm --dir bang-andi preview"
+  }
+}
