@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { notifyDatabaseChange } from '../hooks/useLiveQuery.js';
 import { calculateMovingAverageHPP } from './hpp.js';
 import { convertToBaseUnit } from './units.js';
+import { translateErrorMessage, isOnline } from './errorHandler.js';
 import { nanoid } from 'nanoid';
 
 /**
@@ -23,8 +24,8 @@ function broadcastSyncStatus(status) {
   syncListeners.forEach((fn) => {
     try {
       fn(status);
-    } catch (e) {
-      console.error(e);
+    } catch {
+      // Ignore listener error
     }
   });
 }
@@ -33,15 +34,13 @@ function broadcastSyncStatus(status) {
  * Full sync: Pulls all 8 tables from Supabase down to local Dexie cache
  */
 export async function syncFromSupabase() {
-  if (!isSupabaseConfigured || !supabase) return false;
+  if (!isSupabaseConfigured || !supabase || !isOnline()) return false;
   if (isSyncing) return false;
 
   isSyncing = true;
   broadcastSyncStatus({ syncing: true, error: null });
 
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-
     // 1. Categories
     const { data: categories, error: catErr } = await supabase
       .from('categories')
@@ -257,8 +256,8 @@ export async function syncFromSupabase() {
     broadcastSyncStatus({ syncing: false, lastSync: new Date(), error: null });
     return true;
   } catch (err) {
-    console.error('Error saat sync dari Supabase:', err);
-    broadcastSyncStatus({ syncing: false, error: err.message });
+    const friendlyMessage = translateErrorMessage(err, 'Gagal menyinkronkan data dengan Supabase.');
+    broadcastSyncStatus({ syncing: false, error: friendlyMessage });
     return false;
   } finally {
     isSyncing = false;
@@ -266,26 +265,14 @@ export async function syncFromSupabase() {
 }
 
 /**
- * Setup Realtime Listeners for all 8 tables to sync across iPad and HP
+ * Setup Realtime Listeners to sync across iPad and HP
  */
 export function setupRealtimeSync() {
   if (!isSupabaseConfigured || !supabase) return () => {};
 
-  const tables = [
-    'accounts',
-    'contacts',
-    'categories',
-    'products',
-    'product_units',
-    'transactions',
-    'transaction_payments',
-    'stock_movements',
-  ];
-
   const channel = supabase
     .channel('bang-andi-realtime-channel')
-    .on('postgres_changes', { event: '*', schema: 'public' }, async (payload) => {
-      console.log('Realtime change received from cloud:', payload.table, payload.eventType);
+    .on('postgres_changes', { event: '*', schema: 'public' }, async () => {
       // Trigger refresh from Supabase to keep Dexie in sync
       await syncFromSupabase();
     })
@@ -346,6 +333,16 @@ export async function createSupabaseTransaction(txData) {
       let newHPP = currentHPP;
 
       if (txData.type === 'income' && txData.sub_type === 'sale') {
+        if (currentStock <= 0) {
+          throw new Error(
+            `Stok komoditas "${dbItem ? dbItem.name : 'Barang'}" sedang KOSONG (0 ${dbItem?.base_unit || 'unit'}). Silakan lakukan input stok masuk / pembelian terlebih dahulu sebelum menjual.`
+          );
+        }
+        if (currentStock < baseQty) {
+          throw new Error(
+            `Stok "${dbItem ? dbItem.name : 'Barang'}" tidak mencukupi (Tersedia: ${currentStock} ${dbItem?.base_unit || ''}, diminta: ${baseQty} ${unit}). Silakan input stok masuk terlebih dahulu.`
+          );
+        }
         mutationType = 'out';
         newStock = currentStock - baseQty;
       } else if (txData.type === 'expense' && txData.sub_type === 'purchase') {
@@ -574,4 +571,262 @@ export async function createSupabaseTransaction(txData) {
 
   notifyDatabaseChange();
   return localTxId;
+}
+
+/**
+ * Voids a transaction in Supabase and syncs back to keep cloud and local consistent
+ */
+export async function voidSupabaseTransaction(txId, reason = '') {
+  if (!isSupabaseConfigured || !supabase || !isOnline()) return false;
+
+  try {
+    const now = new Date();
+
+    // 1. Fetch transaction record from Supabase
+    const { data: tx, error: fetchErr } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('id', txId)
+      .maybeSingle();
+
+    if (fetchErr || !tx) {
+      // Transaction may only exist locally
+      return false;
+    }
+
+    if (tx.status === 'void') return true;
+
+    // 2. Mark transaction as void in Supabase
+    const { error: updateErr } = await supabase
+      .from('transactions')
+      .update({
+        status: 'void',
+        void_reason: reason || 'Dibatalkan oleh pengguna',
+        voided_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      })
+      .eq('id', txId);
+
+    if (updateErr) throw updateErr;
+
+    // 3. Reverse stock for line items in Supabase
+    if (Array.isArray(tx.items_snapshot)) {
+      for (const item of tx.items_snapshot) {
+        const prodId = item.product_id || item.item_id;
+        if (!prodId) continue;
+
+        const { data: currentProd } = await supabase
+          .from('products')
+          .select('stock')
+          .eq('id', prodId)
+          .maybeSingle();
+
+        if (currentProd) {
+          const curStock = Number(currentProd.stock) || 0;
+          const baseQty = Number(item.base_qty || item.qty) || 0;
+          let newStock = curStock;
+
+          if (tx.type === 'income' && (tx.sub_type === 'sale' || tx.sub_type === 'sales')) {
+            newStock = curStock + baseQty;
+          } else if (tx.type === 'expense' && (tx.sub_type === 'purchase' || tx.sub_type === 'purchases')) {
+            newStock = Math.max(0, curStock - baseQty);
+          }
+
+          await supabase
+            .from('products')
+            .update({
+              stock: newStock,
+              updated_at: now.toISOString(),
+            })
+            .eq('id', prodId);
+
+          const { data: { user } } = await supabase.auth.getUser();
+          await supabase.from('stock_movements').insert({
+            user_id: user?.id || null,
+            product_id: prodId,
+            transaction_id: txId,
+            type: 'void_reversal',
+            qty: baseQty,
+            unit: item.unit || 'unit',
+            previous_stock: curStock,
+            new_stock: newStock,
+            date: now.toISOString(),
+            notes: `Pembatalan (Void) Faktur ${tx.invoice_number}: ${reason || 'Batal'}`,
+          });
+        }
+      }
+    }
+
+    // 4. Reverse account balance in Supabase
+    if (tx.account_id && Number(tx.paid_amount) > 0) {
+      const { data: acc } = await supabase
+        .from('accounts')
+        .select('balance')
+        .eq('id', tx.account_id)
+        .maybeSingle();
+
+      if (acc) {
+        const paid = Number(tx.paid_amount) || 0;
+        const curBal = Number(acc.balance) || 0;
+        const delta = tx.type === 'income' ? -paid : paid;
+
+        await supabase
+          .from('accounts')
+          .update({
+            balance: curBal + delta,
+            updated_at: now.toISOString(),
+          })
+          .eq('id', tx.account_id);
+      }
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('Gagal void transaksi di Supabase:', err);
+    return false;
+  }
+}
+
+/**
+ * Creates a new product in Supabase and returns the created record or null
+ */
+export async function createSupabaseProduct(productData) {
+  if (!isSupabaseConfigured || !supabase || !isOnline()) return null;
+
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    const now = new Date();
+
+    const insertPayload = {
+      user_id: user?.id || null,
+      category_id: productData.commodity_id || productData.category_id || null,
+      code: productData.code || null,
+      name: String(productData.name || '').trim().slice(0, 150),
+      base_unit: String(productData.base_unit || 'kg').trim().toLowerCase().slice(0, 30),
+      stock: Math.max(0, Number(productData.stock) || 0),
+      hpp: Math.max(0, Math.round(Number(productData.hpp) || 0)),
+      selling_price: Math.max(0, Math.round(Number(productData.selling_price) || 0)),
+      min_stock: Math.max(0, Number(productData.min_stock) || 0),
+      is_perishable: Boolean(productData.is_perishable),
+      is_livestock: Boolean(productData.is_livestock),
+      is_active: true,
+      created_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from('products')
+      .insert(insertPayload)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.warn('Gagal simpan produk ke Supabase:', err);
+    return null;
+  }
+}
+
+/**
+ * Updates a product in Supabase
+ */
+export async function updateSupabaseProduct(productId, updates) {
+  if (!isSupabaseConfigured || !supabase || !isOnline() || !productId) return false;
+
+  try {
+    const now = new Date();
+    const payload = {
+      updated_at: now.toISOString(),
+    };
+
+    if (updates.name !== undefined) payload.name = String(updates.name).trim().slice(0, 150);
+    if (updates.commodity_id !== undefined) payload.category_id = updates.commodity_id || null;
+    if (updates.category_id !== undefined) payload.category_id = updates.category_id || null;
+    if (updates.base_unit !== undefined) payload.base_unit = String(updates.base_unit).trim().toLowerCase().slice(0, 30);
+    if (updates.stock !== undefined) payload.stock = Math.max(0, Number(updates.stock) || 0);
+    if (updates.hpp !== undefined) payload.hpp = Math.max(0, Math.round(Number(updates.hpp) || 0));
+    if (updates.selling_price !== undefined) payload.selling_price = Math.max(0, Math.round(Number(updates.selling_price) || 0));
+    if (updates.min_stock !== undefined) payload.min_stock = Math.max(0, Number(updates.min_stock) || 0);
+    if (updates.is_perishable !== undefined) payload.is_perishable = Boolean(updates.is_perishable);
+    if (updates.is_livestock !== undefined) payload.is_livestock = Boolean(updates.is_livestock);
+
+    const { error } = await supabase
+      .from('products')
+      .update(payload)
+      .eq('id', productId);
+
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.warn('Gagal update produk di Supabase:', err);
+    return false;
+  }
+}
+
+/**
+ * Deletes a product in Supabase
+ */
+export async function deleteSupabaseProduct(productId) {
+  if (!isSupabaseConfigured || !supabase || !isOnline() || !productId) return false;
+
+  try {
+    const { error } = await supabase
+      .from('products')
+      .delete()
+      .eq('id', productId);
+
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.warn('Gagal hapus produk di Supabase:', err);
+    return false;
+  }
+}
+
+/**
+ * Records a stock adjustment (Opname) in Supabase
+ */
+export async function adjustSupabaseStock(productId, delta, reason = 'Penyesuaian Stok', notes = '') {
+  if (!isSupabaseConfigured || !supabase || !isOnline() || !productId) return false;
+
+  try {
+    const now = new Date();
+    const { data: prod, error: fetchErr } = await supabase
+      .from('products')
+      .select('*')
+      .eq('id', productId)
+      .maybeSingle();
+
+    if (fetchErr || !prod) return false;
+
+    const curStock = Number(prod.stock) || 0;
+    const newStock = Math.max(0, curStock + Number(delta));
+
+    await supabase
+      .from('products')
+      .update({
+        stock: newStock,
+        updated_at: now.toISOString(),
+      })
+      .eq('id', productId);
+
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from('stock_movements').insert({
+      user_id: user?.id || null,
+      product_id: productId,
+      type: 'adjustment',
+      qty: Number(delta),
+      unit: prod.base_unit || 'unit',
+      previous_stock: curStock,
+      new_stock: newStock,
+      date: now.toISOString(),
+      notes: `${reason}${notes ? ` - ${notes}` : ''}`,
+    });
+
+    return true;
+  } catch (err) {
+    console.warn('Gagal catat penyesuaian stok di Supabase:', err);
+    return false;
+  }
 }

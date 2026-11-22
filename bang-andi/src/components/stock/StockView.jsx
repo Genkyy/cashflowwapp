@@ -1,14 +1,17 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from '../../hooks/useLiveQuery.js';
 import { db } from '../../lib/db.js';
 import { useStock } from '../../hooks/useStock.js';
+import { useAppStore } from '../../lib/store.js';
 import { formatCurrency, formatDate, formatNumber } from '../../lib/formatters.js';
+import StockItemModal from './StockItemModal.jsx';
+import { syncStandardCatalog } from '../../lib/seed.js';
+import { translateErrorMessage } from '../../lib/errorHandler.js';
 import {
   Package,
   Layers,
   Activity,
   Plus,
-  Minus,
   Edit3,
   AlertTriangle,
   History,
@@ -19,21 +22,18 @@ import {
   Egg,
   Beef,
   Milk,
-  ArrowRight,
+  Fish,
+  RotateCcw,
   Search,
   X,
-  ChevronRight,
-  TrendingDown,
-  TrendingUp,
   SlidersHorizontal,
   Check,
   ArrowDownLeft,
-  ArrowUpRight
+  ChevronDown
 } from 'lucide-react';
-import { SkeletonCard, SkeletonTable } from '../ui/Skeleton.jsx';
+import { SkeletonCard } from '../ui/Skeleton.jsx';
 import EmptyState from '../ui/EmptyState.jsx';
 import BottomSheet from '../ui/BottomSheet.jsx';
-import Button from '../ui/Button.jsx';
 import LoadMoreButton from '../ui/LoadMoreButton.jsx';
 import usePagination from '../../hooks/usePagination.js';
 
@@ -48,7 +48,8 @@ import usePagination from '../../hooks/usePagination.js';
  * - Quick Stock Opname / Adjustment modal
  */
 export default function StockView() {
-  const { adjustStock } = useStock();
+  const { adjustStock, createItem, updateItem, deleteItem } = useStock();
+  const { addNotification, showStockForm, setShowStockForm } = useAppStore();
 
   // 1. Live Queries
   const items = useLiveQuery(() => db.items.toArray(), [], []);
@@ -62,18 +63,60 @@ export default function StockView() {
   // 2. Navigation & Filter State
   const [activeTab, setActiveTab] = useState('inventory'); // inventory | mutations | livestock
   const [selectedCommodity, setSelectedCommodity] = useState('all');
+  const [mutationCommodity, setMutationCommodity] = useState('all');
+  const [commoditySheetTarget, setCommoditySheetTarget] = useState('inventory'); // 'inventory' | 'mutations'
+  const [isCommoditySheetOpen, setIsCommoditySheetOpen] = useState(false);
+  const [commoditySheetSearch, setCommoditySheetSearch] = useState('');
   const [search, setSearch] = useState('');
   const [conditionFilter, setConditionFilter] = useState('all'); // all | warning | safe
   const [mutationPeriod, setMutationPeriod] = useState('this_month'); // this_month (Anti-Lag default) | all | last_30_days
 
-  // 3. Adjustment Modal State
+  // 3. Tambah & Ubah Barang Modal State
+  const [isItemModalOpen, setIsItemModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+
+  // Sync with global showStockForm trigger
+  useEffect(() => {
+    if (showStockForm) {
+      setEditingItem(null);
+      setIsItemModalOpen(true);
+      setShowStockForm(false);
+    }
+  }, [showStockForm, setShowStockForm]);
+
+  // Handlers for Add / Edit / Delete Stock Items
+  const handleSaveItem = async (formData) => {
+    if (formData.id) {
+      await updateItem(formData.id, formData);
+      addNotification({
+        message: `Barang "${formData.name}" berhasil diperbarui.`,
+        type: 'success',
+      });
+    } else {
+      await createItem(formData);
+      addNotification({
+        message: `Barang "${formData.name}" berhasil ditambahkan ke stok.`,
+        type: 'success',
+      });
+    }
+  };
+
+  const handleDeleteItem = async (itemId) => {
+    await deleteItem(itemId);
+    addNotification({
+      message: 'Barang berhasil dihapus dari inventaris stok.',
+      type: 'info',
+    });
+  };
+
+  // 4. Adjustment Modal State
   const [adjustingItem, setAdjustingItem] = useState(null);
   const [adjustDelta, setAdjustDelta] = useState('');
   const [adjustReason, setAdjustReason] = useState('Selisih Opname');
   const [adjustNotes, setAdjustNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // 4. Livestock Weight Modal State
+  // 5. Livestock Weight Modal State
   const [weighingLivestock, setWeighingLivestock] = useState(null);
   const [newWeight, setNewWeight] = useState('');
   const [weightNotes, setWeightNotes] = useState('');
@@ -116,6 +159,7 @@ export default function StockView() {
     if (n.includes('sapi')) return Beef;
     if (n.includes('domba')) return Beef;
     if (n.includes('susu')) return Milk;
+    if (n.includes('nila') || n.includes('ikan')) return Fish;
     return Package;
   };
 
@@ -132,6 +176,35 @@ export default function StockView() {
     });
     return result;
   }, [commodities]);
+
+  // Selected commodity object
+  const selectedCommodityObj = useMemo(() => {
+    if (selectedCommodity === 'all') return null;
+    return uniqueCommodities.find((c) => String(c.id) === String(selectedCommodity)) || null;
+  }, [selectedCommodity, uniqueCommodities]);
+
+  // Selected mutation commodity object
+  const selectedMutationCommodityObj = useMemo(() => {
+    if (mutationCommodity === 'all') return null;
+    return uniqueCommodities.find((c) => String(c.id) === String(mutationCommodity)) || null;
+  }, [mutationCommodity, uniqueCommodities]);
+
+  // Total items count per commodity
+  const commodityItemCounts = useMemo(() => {
+    const counts = {};
+    (items || []).forEach((item) => {
+      const cid = String(item.commodity_id);
+      counts[cid] = (counts[cid] || 0) + 1;
+    });
+    return counts;
+  }, [items]);
+
+  // Filtered commodities list for BottomSheet search
+  const filteredSheetCommodities = useMemo(() => {
+    if (!commoditySheetSearch.trim()) return uniqueCommodities;
+    const q = commoditySheetSearch.toLowerCase().trim();
+    return uniqueCommodities.filter((c) => (c.name || '').toLowerCase().includes(q));
+  }, [uniqueCommodities, commoditySheetSearch]);
 
   const commodityMap = useMemo(() => {
     const map = new Map();
@@ -223,18 +296,27 @@ export default function StockView() {
   const handleSaveAdjustment = async (e) => {
     e.preventDefault();
     const delta = Number(adjustDelta);
-    if (!isNaN(delta) && delta !== 0 && adjustingItem) {
-      setIsSubmitting(true);
-      try {
-        await adjustStock(adjustingItem.id, delta, adjustReason, adjustNotes);
-        setAdjustingItem(null);
-        setAdjustDelta('');
-        setAdjustNotes('');
-      } catch (err) {
-        alert('Gagal menyesuaikan stok: ' + err.message);
-      } finally {
-        setIsSubmitting(false);
-      }
+    if (isNaN(delta) || delta === 0) {
+      alert('Silakan masukkan selisih jumlah penyesuaian stok (tidak boleh 0).');
+      return;
+    }
+    if (!adjustingItem) return;
+
+    setIsSubmitting(true);
+    try {
+      await adjustStock(adjustingItem.id, delta, adjustReason, adjustNotes);
+      addNotification({
+        message: `Penyesuaian stok "${adjustingItem.name}" (${delta > 0 ? '+' : ''}${delta} ${adjustingItem.base_unit || ''}) berhasil dicatat.`,
+        type: 'success',
+      });
+      setAdjustingItem(null);
+      setAdjustDelta('');
+      setAdjustNotes('');
+    } catch (err) {
+      const friendly = translateErrorMessage(err, 'Gagal menyesuaikan stok.');
+      alert(friendly);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -262,9 +344,20 @@ export default function StockView() {
       } else if (mutationPeriod === 'last_30_days') {
         if (mDate.getTime() < thirtyDaysAgo.getTime()) return false;
       }
+
+      // Commodity filter (Dynamic Data Scalability)
+      if (mutationCommodity !== 'all') {
+        const item = (items || []).find((it) => String(it.id) === String(m.item_id));
+        if (!item) return false;
+        const matchCid = String(item.commodity_id) === String(mutationCommodity);
+        const selectedObj = uniqueCommodities.find((c) => String(c.id) === String(mutationCommodity));
+        const matchName = selectedObj && (item.name || '').toLowerCase().includes(selectedObj.name.toLowerCase());
+        if (!matchCid && !matchName) return false;
+      }
+
       return true;
     });
-  }, [mutations, mutationPeriod]);
+  }, [mutations, mutationPeriod, mutationCommodity, items, uniqueCommodities]);
 
   // Anti-Lag Pagination: 20 items initial view, reset on period change
   const {
@@ -274,13 +367,13 @@ export default function StockView() {
   } = usePagination(filteredMutations, {
     initialLimit: 20,
     step: 20,
-    resetDependencies: [mutationPeriod, activeTab],
+    resetDependencies: [mutationPeriod, mutationCommodity, activeTab],
   });
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-6">
       {/* =========================================================================
-          1. TOP BAR: TITLE + HERO METRICS
+          1. TOP BAR: TITLE + HERO METRICS + TAMBAH STOK ACTION
          ========================================================================= */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
         <div>
@@ -299,6 +392,37 @@ export default function StockView() {
           <p className="text-xs sm:text-sm text-slate-500 font-medium">
             Monitoring stok multi-satuan, HPP Moving Average, dan aset komoditas riil.
           </p>
+        </div>
+
+        {/* Action Buttons: Tambah Barang + Sinkron Standar */}
+        <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+          <button
+            type="button"
+            onClick={async () => {
+              await syncStandardCatalog();
+              addNotification({
+                message: 'Katalog berhasil disinkronkan dengan standar (Sunco, Minyak Kita, Telur, Susu UHT, Nila, Domba, Sapi).',
+                type: 'success',
+              });
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-2xl bg-white border border-slate-200/80 hover:bg-slate-50 text-slate-700 font-bold text-xs shadow-2xs transition ios-spring-tap cursor-pointer"
+            title="Sinkronkan nama, satuan kerdus/paket, dan harga standar"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-[#00D29E]" />
+            <span className="hidden sm:inline">Sinkron</span> Standar
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setEditingItem(null);
+              setIsItemModalOpen(true);
+            }}
+            className="inline-flex items-center gap-2 bg-[#00D29E] hover:bg-[#10B981] active:scale-95 text-[#071A24] px-4 py-2.5 rounded-2xl font-black text-xs sm:text-sm shadow-sm transition ios-spring-tap cursor-pointer"
+          >
+            <Plus className="w-4 h-4 stroke-[3]" />
+            <span>Tambah Barang</span>
+          </button>
         </div>
       </div>
 
@@ -421,42 +545,9 @@ export default function StockView() {
          ========================================================================= */}
       {activeTab === 'inventory' && (
         <div className="space-y-4 animate-in fade-in duration-200">
-          {/* Controls: Deduplicated Category Chips + Search Bar */}
+          {/* Controls: Search Bar + Commodity Selector Trigger + Status Filter */}
           <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] space-y-3">
-            {/* Category Filter Chips (Clean & Deduplicated!) */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-              <button
-                type="button"
-                onClick={() => setSelectedCommodity('all')}
-                className={`px-3.5 py-1.5 rounded-2xl text-xs font-bold transition shrink-0 cursor-pointer ${selectedCommodity === 'all'
-                  ? 'bg-[#071A24] text-white shadow-xs'
-                  : 'bg-slate-100/80 text-slate-600 hover:bg-slate-200/70'
-                  }`}
-              >
-                Semua Komoditas ({items?.length || 0})
-              </button>
-
-              {uniqueCommodities.map((c) => {
-                const isSelected = String(selectedCommodity) === String(c.id);
-                const Icon = getCommodityIcon(c.name);
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => setSelectedCommodity(c.id)}
-                    className={`px-3.5 py-1.5 rounded-2xl text-xs font-bold transition shrink-0 flex items-center gap-1.5 cursor-pointer ${isSelected
-                      ? 'bg-[#071A24] text-white shadow-xs'
-                      : 'bg-slate-100/80 text-slate-600 hover:bg-slate-200/70'
-                      }`}
-                  >
-                    <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-[#00D29E]' : 'text-slate-400'}`} />
-                    <span>{c.name}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Search Input & Status Quick Filter */}
+            {/* Row 1: Search Bar & Commodity Selector Button */}
             <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
               <div className="relative flex-1">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -464,7 +555,7 @@ export default function StockView() {
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Cari nama komoditas atau varian..."
+                  placeholder="Cari nama barang atau varian stok..."
                   className="w-full pl-10 pr-9 py-2 min-h-[42px] text-xs sm:text-sm bg-slate-50 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-2 focus:ring-[#00D29E] focus:border-[#00D29E] transition font-medium text-slate-800"
                 />
                 {search && (
@@ -479,7 +570,43 @@ export default function StockView() {
                 )}
               </div>
 
-              {/* Condition Quick Filter Chips (Fintech Style) */}
+              {/* Trigger Button: Opens Bottom Sheet for Commodity Selection */}
+              <button
+                type="button"
+                onClick={() => {
+                  setCommoditySheetSearch('');
+                  setIsCommoditySheetOpen(true);
+                }}
+                className={`px-3.5 py-2 min-h-[42px] rounded-2xl text-xs font-bold transition flex items-center justify-between gap-2.5 cursor-pointer shrink-0 border ${
+                  selectedCommodity !== 'all'
+                    ? 'bg-[#071A24] text-white border-[#071A24] shadow-xs'
+                    : 'bg-slate-50 hover:bg-slate-100/80 text-slate-700 border-slate-200/80'
+                }`}
+              >
+                <div className="flex items-center gap-2 truncate max-w-[190px] sm:max-w-[220px]">
+                  {selectedCommodityObj ? (
+                    (() => {
+                      const Icon = getCommodityIcon(selectedCommodityObj.name);
+                      return <Icon className="w-4 h-4 text-[#00D29E] shrink-0" />;
+                    })()
+                  ) : (
+                    <Package className="w-4 h-4 text-slate-400 shrink-0" />
+                  )}
+                  <span className="truncate">
+                    {selectedCommodityObj ? selectedCommodityObj.name : 'Semua Komoditas'}
+                  </span>
+                  {selectedCommodity !== 'all' && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-[#00D29E]/20 text-[#00D29E] font-bold">
+                      {commodityItemCounts[String(selectedCommodity)] || 0}
+                    </span>
+                  )}
+                </div>
+                <ChevronDown className={`w-3.5 h-3.5 transition shrink-0 ${selectedCommodity !== 'all' ? 'text-slate-300' : 'text-slate-400'}`} />
+              </button>
+            </div>
+
+            {/* Row 2: Status Quick Filter Chips + Active Filter Badge */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100/60">
               <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar shrink-0">
                 {[
                   { id: 'all', label: 'Semua Stok' },
@@ -492,15 +619,17 @@ export default function StockView() {
                       key={st.id}
                       type="button"
                       onClick={() => setConditionFilter(st.id)}
-                      className={`px-3 py-2 min-h-[42px] rounded-2xl text-xs font-bold transition shrink-0 flex items-center gap-1.5 cursor-pointer ${isSel
-                        ? 'bg-[#071A24] text-white shadow-xs'
-                        : 'bg-slate-100/80 text-slate-600 hover:bg-slate-200/70'
-                        }`}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                        isSel
+                          ? 'bg-[#071A24] text-white shadow-xs'
+                          : 'bg-slate-100/80 text-slate-600 hover:bg-slate-200/70'
+                      }`}
                     >
                       <span>{st.label}</span>
                       {st.count !== undefined && st.count > 0 && (
-                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${isSel ? 'bg-amber-400 text-[#071A24]' : 'bg-amber-100 text-amber-700'
-                          }`}>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                          isSel ? 'bg-amber-400 text-[#071A24]' : 'bg-amber-100 text-amber-700'
+                        }`}>
                           {st.count}
                         </span>
                       )}
@@ -508,6 +637,20 @@ export default function StockView() {
                   );
                 })}
               </div>
+
+              {selectedCommodity !== 'all' && selectedCommodityObj && (
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 bg-slate-100 px-2.5 py-1 rounded-xl">
+                  <span>Komoditas: <strong className="text-slate-800">{selectedCommodityObj.name}</strong></span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCommodity('all')}
+                    className="p-0.5 hover:bg-slate-200 rounded-md text-slate-400 hover:text-slate-600 cursor-pointer"
+                    title="Reset filter komoditas"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -527,11 +670,16 @@ export default function StockView() {
                   ? 'Tidak ada komoditas yang cocok dengan filter atau kata kunci pencarian Anda.'
                   : 'Belum ada barang komoditas yang terdaftar di database.'
               }
-              actionLabel="Tampilkan Semua Komoditas"
+              actionLabel={items?.length === 0 ? '+ Tambah Barang Baru' : 'Tampilkan Semua Komoditas'}
               onAction={() => {
-                setSelectedCommodity('all');
-                setSearch('');
-                setConditionFilter('all');
+                if (items?.length === 0) {
+                  setEditingItem(null);
+                  setIsItemModalOpen(true);
+                } else {
+                  setSelectedCommodity('all');
+                  setSearch('');
+                  setConditionFilter('all');
+                }
               }}
             />
           ) : (
@@ -618,24 +766,43 @@ export default function StockView() {
                     </div>
 
                     {/* Footer: Price & Adjust Action */}
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
-                      <span className="text-xs text-slate-500 truncate">
-                        Harga Jual: <strong className="text-[#071A24] font-black tabular-nums">{formatCurrency(item.selling_price)}</strong>
-                      </span>
+                    <div className="flex items-center justify-between pt-2.5 border-t border-slate-100 gap-2">
+                      <div className="min-w-0">
+                        <span className="text-[10px] text-slate-400 block font-semibold leading-none">Harga Jual</span>
+                        <div className="text-xs sm:text-sm text-[#071A24] font-black tabular-nums mt-0.5 truncate">
+                          {formatCurrency(item.selling_price)}
+                          <span className="text-[11px] text-slate-400 font-normal"> / {item.base_unit}</span>
+                        </div>
+                      </div>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAdjustingItem(item);
-                          setAdjustDelta('');
-                          setAdjustNotes('');
-                        }}
-                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-[#071A24] hover:text-white text-slate-700 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0"
-                        title="Sesuaikan stok (Opname)"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        <span>Sesuaikan</span>
-                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingItem(item);
+                            setIsItemModalOpen(true);
+                          }}
+                          className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-[#071A24] hover:text-white text-slate-700 text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                          title="Ubah data barang, stok & harga"
+                        >
+                          <Edit3 className="w-3.5 h-3.5 text-[#00D29E]" />
+                          <span>Ubah</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAdjustingItem(item);
+                            setAdjustDelta('');
+                            setAdjustNotes('');
+                          }}
+                          className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                          title="Sesuaikan stok fisik (Opname)"
+                        >
+                          <SlidersHorizontal className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Opname</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -667,29 +834,73 @@ export default function StockView() {
               </p>
             </div>
 
-            {/* Smart Default Period Selector (Bulan Ini active by default) */}
-            <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-2xl self-start sm:self-center overflow-x-auto max-w-full no-scrollbar">
-              {[
-                { id: 'all', label: 'Semua' },
-                { id: 'this_month', label: 'Bulan Ini' },
-                { id: 'last_month', label: 'Bulan Lalu' },
-                { id: 'last_30_days', label: '30 Hari' },
-              ].map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setMutationPeriod(p.id)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
-                    mutationPeriod === p.id
-                      ? 'bg-[#071A24] text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
+            {/* Controls: Compact Commodity Trigger + Period Selector */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 self-stretch sm:self-auto">
+              {/* Compact Filter Trigger: Komoditas */}
+              <button
+                type="button"
+                onClick={() => {
+                  setCommoditySheetTarget('mutations');
+                  setCommoditySheetSearch('');
+                  setIsCommoditySheetOpen(true);
+                }}
+                className={`px-3 py-1.5 min-h-[38px] rounded-2xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border ${
+                  mutationCommodity !== 'all'
+                    ? 'bg-[#071A24] text-white border-[#071A24] shadow-xs'
+                    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200/80'
+                }`}
+                title="Saring mutasi berdasarkan komoditas"
+              >
+                <div className="flex items-center gap-1.5 truncate max-w-[150px]">
+                  <Package className={`w-3.5 h-3.5 shrink-0 ${mutationCommodity !== 'all' ? 'text-[#00D29E]' : 'text-slate-400'}`} />
+                  <span className="truncate">
+                    {selectedMutationCommodityObj ? selectedMutationCommodityObj.name : 'Semua Komoditas'}
+                  </span>
+                </div>
+                <ChevronDown className={`w-3 h-3 shrink-0 ${mutationCommodity !== 'all' ? 'text-slate-300' : 'text-slate-400'}`} />
+              </button>
+
+              {/* Smart Default Period Selector (Bulan Ini active by default) */}
+              <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-2xl overflow-x-auto max-w-full no-scrollbar">
+                {[
+                  { id: 'all', label: 'Semua' },
+                  { id: 'this_month', label: 'Bulan Ini' },
+                  { id: 'last_month', label: 'Bulan Lalu' },
+                  { id: 'last_30_days', label: '30 Hari' },
+                ].map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setMutationPeriod(p.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
+                      mutationPeriod === p.id
+                        ? 'bg-[#071A24] text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
+
+          {/* Active Mutation Filter Pill */}
+          {mutationCommodity !== 'all' && selectedMutationCommodityObj && (
+            <div className="flex items-center gap-2 px-1">
+              <div className="inline-flex items-center gap-1.5 text-xs text-slate-600 bg-white border border-slate-200/80 shadow-2xs px-3 py-1 rounded-xl">
+                <span>Filter Mutasi: <strong className="text-slate-900">{selectedMutationCommodityObj.name}</strong></span>
+                <button
+                  type="button"
+                  onClick={() => setMutationCommodity('all')}
+                  className="p-0.5 hover:bg-slate-100 rounded-md text-slate-400 hover:text-slate-600 cursor-pointer"
+                  title="Hapus filter komoditas"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
 
           {mutations === undefined ? (
             <div className="space-y-3">
@@ -721,11 +932,10 @@ export default function StockView() {
                     >
                       <div className="flex items-center gap-3.5 min-w-0">
                         <div
-                          className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border ${
-                            isIn
+                          className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border ${isIn
                               ? 'bg-emerald-50 text-[#00D29E] border-emerald-200/60'
                               : 'bg-rose-50 text-rose-600 border-rose-200/60'
-                          }`}
+                            }`}
                         >
                           {isIn ? (
                             <ArrowDownLeft className="w-5 h-5 stroke-[2.5]" />
@@ -757,18 +967,16 @@ export default function StockView() {
 
                       <div className="text-right shrink-0">
                         <div
-                          className={`font-black text-sm sm:text-base tabular-nums ${
-                            isIn ? 'text-[#00D29E]' : 'text-rose-600'
-                          }`}
+                          className={`font-black text-sm sm:text-base tabular-nums ${isIn ? 'text-[#00D29E]' : 'text-rose-600'
+                            }`}
                         >
                           {isIn ? '+' : '-'}{m.qty} {m.unit || ''}
                         </div>
                         <span
-                          className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border mt-0.5 ${
-                            isIn
+                          className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border mt-0.5 ${isIn
                               ? 'bg-emerald-50 text-[#00D29E] border-emerald-200'
                               : 'bg-rose-50 text-rose-600 border-rose-200'
-                          }`}
+                            }`}
                         >
                           {isIn ? 'Masuk' : 'Keluar'}
                         </span>
@@ -1045,6 +1253,151 @@ export default function StockView() {
           </form>
         )}
       </BottomSheet>
+
+      {/* =========================================================================
+          BOTTOM SHEET: PILIH KOMODITAS STOK (WITH SEARCH BAR)
+         ========================================================================= */}
+      <BottomSheet
+        isOpen={isCommoditySheetOpen}
+        onClose={() => setIsCommoditySheetOpen(false)}
+        title={commoditySheetTarget === 'mutations' ? 'Filter Komoditas Mutasi' : 'Pilih Komoditas'}
+        size="md"
+      >
+        <div className="space-y-3 pb-2">
+          {/* Search bar inside bottom sheet */}
+          <div className="relative">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={commoditySheetSearch}
+              onChange={(e) => setCommoditySheetSearch(e.target.value)}
+              placeholder="Cari komoditas..."
+              autoFocus
+              className="w-full pl-10 pr-9 py-2.5 text-xs sm:text-sm bg-slate-50 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-2 focus:ring-[#00D29E] focus:border-[#00D29E] transition font-medium text-slate-800"
+            />
+            {commoditySheetSearch && (
+              <button
+                type="button"
+                onClick={() => setCommoditySheetSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* List of Commodities */}
+          <div className="space-y-1.5 max-h-[55vh] overflow-y-auto pr-0.5">
+            {/* Option: Semua Komoditas */}
+            <button
+              type="button"
+              onClick={() => {
+                if (commoditySheetTarget === 'mutations') {
+                  setMutationCommodity('all');
+                } else {
+                  setSelectedCommodity('all');
+                }
+                setIsCommoditySheetOpen(false);
+              }}
+              className={`w-full flex items-center justify-between p-3 rounded-2xl text-left transition cursor-pointer ${
+                (commoditySheetTarget === 'mutations' ? mutationCommodity === 'all' : selectedCommodity === 'all')
+                  ? 'bg-[#071A24] text-white shadow-xs'
+                  : 'bg-slate-50/80 hover:bg-slate-100 text-slate-800'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                  (commoditySheetTarget === 'mutations' ? mutationCommodity === 'all' : selectedCommodity === 'all')
+                    ? 'bg-white/10 text-[#00D29E]'
+                    : 'bg-white border border-slate-200/60 text-slate-500'
+                }`}>
+                  <Package className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs sm:text-sm font-bold">Semua Komoditas</div>
+                  <div className={`text-[11px] ${
+                    (commoditySheetTarget === 'mutations' ? mutationCommodity === 'all' : selectedCommodity === 'all')
+                      ? 'text-slate-300'
+                      : 'text-slate-400'
+                  }`}>
+                    {commoditySheetTarget === 'mutations' ? 'Tampilkan seluruh log mutasi' : `Total ${items?.length || 0} barang inventaris`}
+                  </div>
+                </div>
+              </div>
+              {(commoditySheetTarget === 'mutations' ? mutationCommodity === 'all' : selectedCommodity === 'all') && (
+                <Check className="w-4 h-4 text-[#00D29E] stroke-[3]" />
+              )}
+            </button>
+
+            {/* Individual Commodities */}
+            {filteredSheetCommodities.length === 0 ? (
+              <div className="py-8 text-center text-xs text-slate-400 font-medium">
+                Tidak ada komoditas yang cocok dengan pencarian "{commoditySheetSearch}".
+              </div>
+            ) : (
+              filteredSheetCommodities.map((c) => {
+                const isSelected = commoditySheetTarget === 'mutations'
+                  ? String(mutationCommodity) === String(c.id)
+                  : String(selectedCommodity) === String(c.id);
+                const Icon = getCommodityIcon(c.name);
+                const count = commodityItemCounts[String(c.id)] || 0;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => {
+                      if (commoditySheetTarget === 'mutations') {
+                        setMutationCommodity(c.id);
+                      } else {
+                        setSelectedCommodity(c.id);
+                      }
+                      setIsCommoditySheetOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between p-3 rounded-2xl text-left transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#071A24] text-white shadow-xs'
+                        : 'bg-slate-50/80 hover:bg-slate-100 text-slate-800'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                        isSelected ? 'bg-white/10 text-[#00D29E]' : 'bg-white border border-slate-200/60 text-slate-500'
+                      }`}>
+                        <Icon className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs sm:text-sm font-bold">{c.name}</div>
+                        <div className={`text-[11px] ${isSelected ? 'text-slate-300' : 'text-slate-400'}`}>
+                          {count} varian barang
+                        </div>
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <Check className="w-4 h-4 text-[#00D29E] stroke-[3]" />
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </BottomSheet>
+
+      {/* =========================================================================
+          TAMBAH / UBAH BARANG MODAL (BOTTOM SHEET)
+         ========================================================================= */}
+      <StockItemModal
+        isOpen={isItemModalOpen}
+        onClose={() => {
+          setIsItemModalOpen(false);
+          setEditingItem(null);
+        }}
+        item={editingItem}
+        commodities={uniqueCommodities}
+        conversions={conversions}
+        onSave={handleSaveItem}
+        onDelete={handleDeleteItem}
+      />
     </div>
   );
 }

@@ -205,17 +205,13 @@ export function generateWAMessage(type, data = {}) {
     const totalIncome = formatCurrency(data.totalIncome || 0);
     const totalExpense = formatCurrency(data.totalExpense || 0);
     const netProfit = formatCurrency(data.netProfit || 0);
-    const totalReceivable = formatCurrency(data.totalReceivable || 0);
-    const totalPayable = formatCurrency(data.totalPayable || 0);
 
     return (
       `*RINGKASAN LAPORAN KEUANGAN CV AMANAH BAROKAH*\n` +
       `Periode: *${period}*\n\n` +
       `• Total Pemasukan: ${totalIncome}\n` +
       `• Total Pengeluaran: ${totalExpense}\n` +
-      `• *Laba Bersih: ${netProfit}*\n` +
-      `• Sisa Piutang Usaha: ${totalReceivable}\n` +
-      `• Sisa Utang Usaha: ${totalPayable}\n\n` +
+      `• *Laba Bersih: ${netProfit}*\n\n` +
       `Laporan digenerate otomatis dari Sistem Komoditas & Keuangan CV Amanah Barokah.`
     );
   }

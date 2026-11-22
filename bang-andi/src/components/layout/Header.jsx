@@ -13,7 +13,7 @@ import {
   Bell,
   ChevronRight,
   AlertTriangle as Warning,
-  Clock,
+  Calendar,
   X
 } from 'lucide-react';
 
@@ -29,29 +29,30 @@ import {
  */
 export default function Header() {
   const { setShowTransactionForm, setActiveTab, activeTab } = useAppStore();
-  const { isConfigured } = useAuthStore();
+  const { isConfigured, user, setAuthModalOpen } = useAuthStore();
   const [syncState, setSyncState] = useState({ syncing: false, lastSync: null, error: null });
   const [isRotating, setIsRotating] = useState(false);
   const [showNotificationMenu, setShowNotificationMenu] = useState(false);
 
   // Live alerts for notification bell
   const items = useLiveQuery(() => db.items.toArray(), [], []);
-  const transactions = useLiveQuery(() => db.transactions.toArray(), [], []);
+  const operationalNotes = useLiveQuery(() => db.operational_notes.toArray(), [], []);
 
   const lowStockItems = useMemo(() => {
     return (items || []).filter((it) => Number(it.stock) <= (Number(it.min_stock) || 0));
   }, [items]);
 
-  const dueTransactions = useMemo(() => {
-    const nowTime = new Date().getTime();
-    return (transactions || []).filter((tx) => {
-      if (tx.status === 'void' || tx.payment_status === 'paid' || !tx.due_date) return false;
-      const dueTime = new Date(tx.due_date).getTime();
-      return dueTime <= nowTime + 3 * 24 * 3600 * 1000; // Overdue or due within 3 days
-    });
-  }, [transactions]);
+  const [todayDateStr] = useState(() => new Date().toISOString().slice(0, 10));
 
-  const totalAlerts = lowStockItems.length + dueTransactions.length;
+  const todayNotes = useMemo(() => {
+    return (operationalNotes || []).filter((n) => {
+      if (n.is_completed) return false;
+      if (!n.date) return true;
+      return n.date.slice(0, 10) <= todayDateStr;
+    });
+  }, [operationalNotes, todayDateStr]);
+
+  const totalAlerts = lowStockItems.length + todayNotes.length;
 
   useEffect(() => {
     return onSyncStatusChange((status) => {
@@ -156,12 +157,30 @@ export default function Header() {
           {/* Cloud Sync Status Capsule */}
           <button
             type="button"
-            onClick={isConfigured ? handleManualSync : undefined}
-            title={isConfigured ? 'Klik untuk sinkronisasi manual ke cloud' : 'Mode Offline (Lokal)'}
+            onClick={() => {
+              if (isConfigured) {
+                if (!user) {
+                  setAuthModalOpen(true);
+                } else {
+                  handleManualSync();
+                }
+              } else {
+                setAuthModalOpen(true);
+              }
+            }}
+            title={
+              isConfigured
+                ? user
+                  ? `Terhubung sebagai ${user.email}. Klik untuk sinkronisasi manual.`
+                  : 'Klik untuk masuk dengan akun admin Supabase'
+                : 'Mode Offline (Lokal)'
+            }
             className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition select-none min-h-[38px] touch-target ios-spring-tap ${
               isConfigured
-                ? 'bg-slate-100 hover:bg-slate-200/70 text-slate-700 border border-slate-200/60 cursor-pointer'
-                : 'bg-amber-50 text-amber-800 border border-amber-200'
+                ? user
+                  ? 'bg-slate-100 hover:bg-slate-200/70 text-slate-700 border border-slate-200/60 cursor-pointer'
+                  : 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 cursor-pointer'
+                : 'bg-amber-50 text-amber-800 border border-amber-200 cursor-pointer'
             }`}
           >
             {syncState.syncing || isRotating ? (
@@ -176,7 +195,9 @@ export default function Header() {
               {syncState.syncing || isRotating
                 ? 'Menyinkronkan...'
                 : isConfigured
-                  ? 'Terhubung'
+                  ? user
+                    ? 'Terhubung'
+                    : 'Masuk Cloud'
                   : 'Mode Offline'}
             </span>
           </button>
@@ -213,6 +234,50 @@ export default function Header() {
                 </div>
 
                 <div className="space-y-2 text-xs max-h-72 overflow-y-auto">
+                  {/* Catatan & Pengingat Hari Ini */}
+                  {todayNotes.length > 0 && (
+                    <div className="space-y-1.5 pb-2 border-b border-slate-100">
+                      <div className="flex items-center justify-between text-[11px] font-extrabold uppercase tracking-wider text-slate-500 px-1">
+                        <span>Pengingat & Agenda Hari Ini</span>
+                        <span className="text-[10px] bg-[#00D29E]/20 text-[#071A24] px-1.5 py-0.2 rounded-full font-black">
+                          {todayNotes.length}
+                        </span>
+                      </div>
+                      {todayNotes.map((note) => (
+                        <div
+                          key={note.id}
+                          className="p-2.5 rounded-2xl bg-emerald-50/70 border border-emerald-200/80 flex items-start justify-between gap-2"
+                        >
+                          <div className="flex items-start gap-2 min-w-0">
+                            <Calendar className="w-4 h-4 text-[#00D29E] shrink-0 mt-0.5" />
+                            <div className="min-w-0">
+                              <strong className="block font-bold text-[#071A24] text-xs truncate">
+                                {note.title}
+                              </strong>
+                              <span className="text-[11px] text-slate-500">
+                                {note.category || 'Umum'} • Prioritas: {note.priority === 'high' ? 'Tinggi' : note.priority === 'medium' ? 'Sedang' : 'Rendah'}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              await db.operational_notes.update(note.id, {
+                                is_completed: 1,
+                                completed_at: new Date().toISOString(),
+                              });
+                            }}
+                            className="text-[11px] font-bold text-emerald-800 bg-white hover:bg-emerald-100 px-2.5 py-1 rounded-xl border border-emerald-200 transition cursor-pointer shrink-0"
+                            title="Tandai selesai"
+                          >
+                            Selesai
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {lowStockItems.length > 0 && (
                     <div
                       onClick={() => {
@@ -232,26 +297,10 @@ export default function Header() {
                     </div>
                   )}
 
-                  {dueTransactions.length > 0 && (
-                    <div
-                      onClick={() => {
-                        setActiveTab('transactions');
-                        setShowNotificationMenu(false);
-                      }}
-                      className="p-2.5 rounded-2xl bg-emerald-50/80 text-emerald-900 border border-emerald-200/80 flex items-start gap-2.5 cursor-pointer hover:bg-emerald-100/70 transition"
-                    >
-                      <Clock className="w-4.5 h-4.5 text-emerald-600 shrink-0 mt-0.5" />
-                      <div>
-                        <strong className="block font-bold">Jatuh Tempo ({dueTransactions.length} tagihan)</strong>
-                        <span>Ada transaksi yang mendekati atau melewati tenggat pembayaran.</span>
-                      </div>
-                    </div>
-                  )}
-
                   {totalAlerts === 0 && (
                     <div className="py-6 text-center text-slate-400">
-                      <p className="font-semibold text-xs text-slate-600">Semua aman & terkendali! 🎉</p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">Tidak ada stok kritis atau tagihan jatuh tempo.</p>
+                      <p className="font-semibold text-xs text-slate-600">Semua agenda & stok aman! 🎉</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Tidak ada pengingat hari ini atau stok kritis.</p>
                     </div>
                   )}
                 </div>
@@ -262,7 +311,10 @@ export default function Header() {
           {/* Quick Add Button - Desktop/Tablet (FlowMint Style) */}
           <button
             type="button"
-            onClick={() => setShowTransactionForm(true)}
+            onClick={() => {
+              setActiveTab('transactions');
+              setShowTransactionForm(true);
+            }}
             className="hidden md:inline-flex items-center gap-2 bg-[#071A24] hover:bg-[#0B2533] active:scale-95 text-white px-3.5 py-2 rounded-2xl font-bold text-xs sm:text-sm shadow-xs transition ios-spring-tap min-h-[38px] cursor-pointer"
           >
             <Plus className="w-4 h-4 text-[#00D29E] stroke-[2.5]" />

@@ -4,6 +4,7 @@ import { db } from '../lib/db.js';
 import { calculateMovingAverageHPP } from '../lib/hpp.js';
 import { convertToBaseUnit } from '../lib/units.js';
 import { useLiveQuery, notifyDatabaseChange } from './useLiveQuery.js';
+import { voidSupabaseTransaction } from '../lib/supabaseService.js';
 
 export function getAllTransactionsQuery() {
   return db.transactions.orderBy('date').reverse().toArray();
@@ -109,6 +110,16 @@ export function useTransactions() {
             let newHPP = currentHPP;
 
             if (data.type === 'income' && data.sub_type === 'sale') {
+              if (currentStock <= 0) {
+                throw new Error(
+                  `Stok komoditas "${item ? item.name : 'Barang'}" sedang KOSONG (0 ${item?.base_unit || 'unit'}). Silakan lakukan input stok masuk / pembelian terlebih dahulu sebelum menjual.`
+                );
+              }
+              if (currentStock < baseQty) {
+                throw new Error(
+                  `Stok "${item ? item.name : 'Barang'}" tidak mencukupi (Tersedia: ${currentStock} ${item?.base_unit || ''}, diminta: ${baseQty} ${unit}). Silakan input stok masuk terlebih dahulu.`
+                );
+              }
               mutationType = 'out';
               newStock = currentStock - baseQty;
             } else if (data.type === 'expense' && data.sub_type === 'purchase') {
@@ -254,8 +265,8 @@ export function useTransactions() {
             // Put stock back
             newStock = currentStock + baseQty;
           } else if (tx.type === 'expense' && tx.sub_type === 'purchase') {
-            // Take back purchased stock
-            newStock = currentStock - baseQty;
+            // Take back purchased stock (prevent negative)
+            newStock = Math.max(0, currentStock - baseQty);
           }
 
           await db.items.update(item.id, {
@@ -352,6 +363,15 @@ export function useTransactions() {
         return true;
       }
     );
+
+    // Synchronize void status with Supabase if online
+    try {
+      await voidSupabaseTransaction(id, reason);
+    } catch {
+      // Handled silently
+    }
+
+    return true;
   }, []);
 
   /**

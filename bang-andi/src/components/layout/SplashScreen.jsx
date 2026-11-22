@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { ShieldCheck, Sparkles } from 'lucide-react';
 import logoImg from '../../assets/cv-amanah-barokah.jpeg';
 
+const CURRENT_YEAR = new Date().getFullYear();
+
 /**
  * Mobile Banking Style Splash & Loading Screen
  * Inspired by top tier mobile banking apps (BCA, Livin' Mandiri, BRImo):
@@ -126,7 +128,7 @@ export default function SplashScreen({ onComplete }) {
           <span>Sistem Finansial & Gudang Terenkripsi</span>
         </div>
         <p className="text-[10px] text-slate-500 mt-2 font-medium">
-          © {new Date().getFullYear()} CV Amanah Barokah • All Rights Reserved
+          © {CURRENT_YEAR} CV Amanah Barokah • All Rights Reserved
         </p>
       </div>
     </div>

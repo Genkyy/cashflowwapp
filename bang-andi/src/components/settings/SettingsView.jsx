@@ -5,50 +5,108 @@ import { useAuthStore } from '../../lib/authStore.js';
 import { syncFromSupabase } from '../../lib/supabaseService.js';
 import { formatCurrency } from '../../lib/formatters.js';
 import { exportToJSON } from '../../lib/exporters.js';
+import { resetDatabaseToReal } from '../../lib/seed.js';
+import { translateErrorMessage } from '../../lib/errorHandler.js';
 import BottomSheet from '../ui/BottomSheet.jsx';
 import Button from '../ui/Button.jsx';
 import LoadMoreButton from '../ui/LoadMoreButton.jsx';
 import usePagination from '../../hooks/usePagination.js';
 import {
   Cloud,
-  Users,
   Wallet,
   Download,
   Upload,
   RefreshCw,
   Plus,
-  FileCode,
-  Building,
-  UserCheck,
   ChevronRight,
   CheckSquare,
   Square,
-  CheckCircle2,
-  Calendar,
-  Tag,
-  Clock,
-  Trash2
+  Edit2,
+  Trash2,
+  AlertTriangle,
+  RotateCcw,
+  Check,
+  ShieldCheck
 } from 'lucide-react';
 
 /**
  * Apple HIG Settings View (iPhone Settings Inset Grouped Style)
  * 
- * Features:
- * - Apple Large Title "Pengaturan"
- * - Inset Grouped List sections:
- *   - Soft tinted squircle icons on the left
- *   - Bold title & secondary subtitle
- *   - Right accessory value & Chevron `>`
- * - Sub-view management modals (Kas & Bank, Kontak, Cloud, Backup)
+ * Scaled & Optimized:
+ * 1. Single Primary Cash Account with full editability (name, type, account number, balance)
+ * 2. Purged Contacts (Pelanggan & Supplier) - no debt/receivables workflow
+ * 3. Database Reset to Real Testing Mode (purges all dummy records)
+ * 4. Operational Notes (F5.4) & Cloud Sync
  */
 export default function SettingsView() {
-  const { user, isConfigured } = useAuthStore();
+  const { isConfigured, user, setAuthModalOpen } = useAuthStore();
   const accounts = useLiveQuery(() => db.accounts.toArray(), [], []);
-  const contacts = useLiveQuery(() => db.contacts.toArray(), [], []);
   const operationalNotes = useLiveQuery(() => db.operational_notes.toArray(), [], []);
 
-  const [activeSection, setActiveSection] = useState('overview'); // overview | cloud | accounts | contacts | backup | notes
+  const primaryAccount = accounts?.[0] || null;
+
+  const [activeSection, setActiveSection] = useState('overview'); // overview | cloud | accounts | notes | reset_confirm
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+
+  // Edit Single Account State
+  const [showEditAccountModal, setShowEditAccountModal] = useState(false);
+  const [editAccName, setEditAccName] = useState('');
+  const [editAccType, setEditAccType] = useState('cash');
+  const [editAccNumber, setEditAccNumber] = useState('');
+  const [editAccBalance, setEditAccBalance] = useState('');
+
+  const handleOpenEditAccount = () => {
+    if (primaryAccount) {
+      setEditAccName(primaryAccount.name || 'Kas Utama');
+      setEditAccType(primaryAccount.type || 'cash');
+      setEditAccNumber(primaryAccount.account_number || '');
+      setEditAccBalance(String(primaryAccount.balance ?? 0));
+    } else {
+      setEditAccName('Kas Utama');
+      setEditAccType('cash');
+      setEditAccNumber('');
+      setEditAccBalance('0');
+    }
+    setShowEditAccountModal(true);
+  };
+
+  const handleSaveAccount = async (e) => {
+    e.preventDefault();
+    const updatedData = {
+      name: editAccName.trim() || 'Kas Utama',
+      type: editAccType,
+      account_number: editAccNumber.trim(),
+      balance: Number(editAccBalance) || 0,
+      is_active: 1,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (primaryAccount) {
+      await db.accounts.update(primaryAccount.id, updatedData);
+    } else {
+      await db.accounts.add({
+        code: 'ACC-KAS',
+        ...updatedData,
+        created_at: new Date().toISOString(),
+      });
+    }
+    setShowEditAccountModal(false);
+  };
+
+  // Database Reset Handler
+  const handleConfirmReset = async () => {
+    setIsResetting(true);
+    try {
+      await resetDatabaseToReal();
+      setActiveSection('overview');
+      alert('Database berhasil direset ke mode data riil! Seluruh data dummy telah dibersihkan.');
+    } catch (err) {
+      alert('Gagal mereset database: ' + err.message);
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   // Operational Notes State (F5.4)
   const [notesTab, setNotesTab] = useState('active'); // 'active' (Belum Selesai) | 'completed' (Catatan Operasional Selesai)
@@ -98,58 +156,10 @@ export default function SettingsView() {
     setShowNoteModal(false);
   };
 
-  // New Account Modal State
-  const [showAccountModal, setShowAccountModal] = useState(false);
-  const [accName, setAccName] = useState('');
-  const [accType, setAccType] = useState('cash');
-  const [accNumber, setAccNumber] = useState('');
-  const [accBalance, setAccBalance] = useState('');
-
-  // New Contact Modal State
-  const [showContactModal, setShowContactModal] = useState(false);
-  const [conName, setConName] = useState('');
-  const [conType, setConType] = useState('customer');
-  const [conPhone, setConPhone] = useState('');
-  const [conAddress, setConAddress] = useState('');
-
   const handleManualSync = async () => {
     setIsSyncing(true);
     await syncFromSupabase();
     setTimeout(() => setIsSyncing(false), 800);
-  };
-
-  const handleCreateAccount = async (e) => {
-    e.preventDefault();
-    if (!accName) return;
-    await db.accounts.add({
-      name: accName,
-      type: accType,
-      account_number: accNumber,
-      balance: Number(accBalance) || 0,
-      is_active: 1,
-      created_at: new Date().toISOString(),
-    });
-    setShowAccountModal(false);
-    setAccName('');
-    setAccNumber('');
-    setAccBalance('');
-  };
-
-  const handleCreateContact = async (e) => {
-    e.preventDefault();
-    if (!conName) return;
-    await db.contacts.add({
-      name: conName,
-      type: conType,
-      phone: conPhone,
-      address: conAddress,
-      is_active: 1,
-      created_at: new Date().toISOString(),
-    });
-    setShowContactModal(false);
-    setConName('');
-    setConPhone('');
-    setConAddress('');
   };
 
   const restoreInputRef = useRef(null);
@@ -160,7 +170,6 @@ export default function SettingsView() {
       version: '2.0.0',
       timestamp: new Date().toISOString(),
       accounts: await db.accounts.toArray(),
-      contacts: await db.contacts.toArray(),
       commodities: await db.commodities.toArray(),
       items: await db.items.toArray(),
       unit_conversions: await db.unit_conversions.toArray(),
@@ -193,7 +202,6 @@ export default function SettingsView() {
 
       const tablesToLock = [
         db.accounts,
-        db.contacts,
         db.commodities,
         db.items,
         db.unit_conversions,
@@ -209,9 +217,6 @@ export default function SettingsView() {
       await db.transaction('rw', tablesToLock, async () => {
         if (Array.isArray(data.accounts) && data.accounts.length > 0) {
           await db.accounts.bulkPut(data.accounts);
-        }
-        if (Array.isArray(data.contacts) && data.contacts.length > 0) {
-          await db.contacts.bulkPut(data.contacts);
         }
         if (Array.isArray(data.commodities) && data.commodities.length > 0) {
           await db.commodities.bulkPut(data.commodities);
@@ -243,7 +248,8 @@ export default function SettingsView() {
       window.location.reload();
     } catch (err) {
       console.error('Error restore backup:', err);
-      alert(`Gagal memulihkan cadangan: ${err.message}`);
+      const friendly = translateErrorMessage(err, 'Gagal memulihkan cadangan data.');
+      alert(friendly);
     } finally {
       setIsRestoring(false);
       e.target.value = '';
@@ -258,16 +264,119 @@ export default function SettingsView() {
           Pengaturan
         </h1>
         <p className="text-xs text-[#64748B] mt-0.5 font-medium">
-          Konfigurasi Supabase Cloud, rekening kas/bank, kontak rekanan, dan keamanan data
+          Konfigurasi akun kas usaha, sinkronisasi Supabase Cloud, dan manajemen data
         </p>
       </div>
 
-      {/* 2. SECTION 1: CLOUD & SINKRONISASI */}
+      {/* 2. SECTION 1: KEUANGAN & AKUN KAS TUNGGAL */}
+      <div className="space-y-1.5">
+        <div className="px-3 text-[11px] font-bold uppercase tracking-wider text-[#94A3B8]">
+          Keuangan & Rekening
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs divide-y divide-slate-100 overflow-hidden">
+          {/* Row: Akun Kas Utama */}
+          <div
+            onClick={() => setActiveSection('accounts')}
+            className="p-4 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition cursor-pointer"
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-[#D97706] text-white flex items-center justify-center shrink-0 shadow-2xs">
+                <Wallet className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-[#0F172A] tracking-tight">
+                  {primaryAccount?.name || 'Kas Utama'}
+                </div>
+                <div className="text-xs text-[#64748B]">
+                  {primaryAccount?.type === 'bank' ? 'Rekening Bank' : 'Kas Tunai Fisik'}
+                  {primaryAccount?.account_number ? ` • Rek: ${primaryAccount.account_number}` : ''}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs font-black text-emerald-600 tabular-nums">
+                {formatCurrency(primaryAccount?.balance || 0)}
+              </span>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 3. SECTION 2: OPERASIONAL */}
+      <div className="space-y-1.5">
+        <div className="px-3 text-[11px] font-bold uppercase tracking-wider text-[#94A3B8]">
+          Operasional Komoditas
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs divide-y divide-slate-100 overflow-hidden">
+          {/* Row: Catatan & Pengingat Operasional (F5.4) */}
+          <div
+            onClick={() => setActiveSection('notes')}
+            className="p-4 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition cursor-pointer"
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-[#00D29E] text-[#071A24] flex items-center justify-center shrink-0 shadow-2xs font-bold">
+                <CheckSquare className="w-4 h-4 stroke-[2.5]" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-[#0F172A] tracking-tight">
+                  Catatan & Pengingat Operasional
+                </div>
+                <div className="text-xs text-[#64748B]">
+                  To-do list harian, pengiriman komoditas, & jadwal kandang
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs font-bold text-slate-700 tabular-nums">
+                {activeNotes.length} Aktif
+              </span>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 4. SECTION 3: CLOUD & SINKRONISASI */}
       <div className="space-y-1.5">
         <div className="px-3 text-[11px] font-bold uppercase tracking-wider text-[#94A3B8]">
           Koneksi & Sinkronisasi Cloud
         </div>
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs divide-y divide-slate-100 overflow-hidden">
+          {/* Row 0: Auth & Akun Admin */}
+          <div
+            onClick={() => setAuthModalOpen(true)}
+            className="p-4 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition cursor-pointer"
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-[#071A24] text-[#00D29E] flex items-center justify-center shrink-0 shadow-2xs">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-[#0F172A] tracking-tight">
+                  Akun & Sesi Login
+                </div>
+                <div className="text-xs text-[#64748B] truncate">
+                  {user ? user.email : 'Belum masuk (Mode Tamu / Offline)'}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span
+                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${user
+                  ? 'bg-[#ECFDF5] text-[#059669] border-[#A7F3D0]'
+                  : 'bg-slate-100 text-slate-600 border-slate-200'
+                  }`}
+              >
+                {user ? 'Terotentikasi' : 'Buka Login'}
+              </span>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+            </div>
+          </div>
+
           {/* Row 1: Cloud Sync Status */}
           <div
             onClick={() => setActiveSection('cloud')}
@@ -327,104 +436,7 @@ export default function SettingsView() {
         </div>
       </div>
 
-      {/* 3. SECTION 2: KEUANGAN & REKENING */}
-      <div className="space-y-1.5">
-        <div className="px-3 text-[11px] font-bold uppercase tracking-wider text-[#94A3B8]">
-          Keuangan & Rekening
-        </div>
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs divide-y divide-slate-100 overflow-hidden">
-          {/* Row: Akun Kas & Bank */}
-          <div
-            onClick={() => setActiveSection('accounts')}
-            className="p-4 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition cursor-pointer"
-          >
-            <div className="flex items-center gap-3.5 min-w-0">
-              <div className="w-9 h-9 rounded-xl bg-[#D97706] text-white flex items-center justify-center shrink-0 shadow-2xs">
-                <Wallet className="w-4 h-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-bold text-[#0F172A] tracking-tight">
-                  Rekening Kas & Bank
-                </div>
-                <div className="text-xs text-[#64748B]">
-                  Kelola kas tunai fisik, rekening bank, dan saldo awal
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs font-bold text-slate-700 tabular-nums">
-                {accounts?.length || 0} Akun
-              </span>
-              <ChevronRight className="w-4 h-4 text-slate-300" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 4. SECTION 3: REKANAN BISNIS */}
-      <div className="space-y-1.5">
-        <div className="px-3 text-[11px] font-bold uppercase tracking-wider text-[#94A3B8]">
-          Rekanan Bisnis
-        </div>
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs divide-y divide-slate-100 overflow-hidden">
-          {/* Row: Kontak Rekanan */}
-          <div
-            onClick={() => setActiveSection('contacts')}
-            className="p-4 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition cursor-pointer"
-          >
-            <div className="flex items-center gap-3.5 min-w-0">
-              <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
-                <Users className="w-4 h-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-bold text-[#0F172A] tracking-tight">
-                  Kontak Pelanggan & Supplier
-                </div>
-                <div className="text-xs text-[#64748B]">
-                  Data nomor WhatsApp rekanan untuk nota dan penagihan
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs font-bold text-slate-700 tabular-nums">
-                {contacts?.length || 0} Rekanan
-              </span>
-              <ChevronRight className="w-4 h-4 text-slate-300" />
-            </div>
-          </div>
-
-          {/* Row: Catatan & Pengingat Operasional (F5.4) */}
-          <div
-            onClick={() => setActiveSection('notes')}
-            className="p-4 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition cursor-pointer"
-          >
-            <div className="flex items-center gap-3.5 min-w-0">
-              <div className="w-9 h-9 rounded-xl bg-[#00D29E] text-[#071A24] flex items-center justify-center shrink-0 shadow-2xs font-bold">
-                <CheckSquare className="w-4 h-4 stroke-[2.5]" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-bold text-[#0F172A] tracking-tight">
-                  Catatan & Pengingat Operasional
-                </div>
-                <div className="text-xs text-[#64748B]">
-                  To-do list harian, pengiriman komoditas, & jadwal kandang
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs font-bold text-slate-700 tabular-nums">
-                {activeNotes.length} Aktif
-              </span>
-              <ChevronRight className="w-4 h-4 text-slate-300" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 5. SECTION 4: DATA & CADANGAN */}
+      {/* 5. SECTION 4: CADANGAN & PEMULIHAN */}
       <div className="space-y-1.5">
         <div className="px-3 text-[11px] font-bold uppercase tracking-wider text-[#94A3B8]">
           Cadangan & Pemulihan
@@ -487,6 +499,31 @@ export default function SettingsView() {
             onChange={handleRestoreBackup}
             className="hidden"
           />
+
+          {/* Row: Reset Database ke Data Riil */}
+          <div
+            onClick={() => setActiveSection('reset_confirm')}
+            className="p-4 sm:px-5 flex items-center justify-between gap-3 hover:bg-rose-50/60 transition cursor-pointer"
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-rose-500 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                <RotateCcw className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-rose-600 tracking-tight">
+                  Reset Database (Mulai Data Riil)
+                </div>
+                <div className="text-xs text-rose-500/80">
+                  Kosongkan data dummy untuk memulai pengujian riil aplikasi
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs font-bold text-rose-600">Reset</span>
+              <ChevronRight className="w-4 h-4 text-rose-300" />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -514,6 +551,226 @@ export default function SettingsView() {
           </p>
         </div>
       </div>
+
+      {/* =========================================================================
+          SUB-VIEW MODAL: KELOLA AKUN KAS UTAMA
+         ========================================================================= */}
+      <BottomSheet
+        isOpen={activeSection === 'accounts'}
+        onClose={() => setActiveSection('overview')}
+        title={
+          <div className="flex items-center gap-2 text-[#064E3B]">
+            <Wallet className="w-5 h-5 text-[#D97706]" />
+            <span>Akun Kas Usaha</span>
+          </div>
+        }
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-tr from-[#071A24] to-[#0F2D3D] text-white shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-300">Akun Kas Utama</span>
+              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-[#00D29E] border border-emerald-500/30">
+                {primaryAccount?.type === 'bank' ? 'Rekening Bank' : 'Kas Tunai Fisik'}
+              </span>
+            </div>
+
+            <div>
+              <div className="text-xs text-slate-400 font-medium">Saldo Kas Saat Ini</div>
+              <div className="text-2xl sm:text-3xl font-black text-[#00D29E] tabular-nums tracking-tight">
+                {formatCurrency(primaryAccount?.balance || 0)}
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-white/10 flex items-center justify-between text-xs text-slate-300">
+              <span className="font-bold">{primaryAccount?.name || 'Kas Utama'}</span>
+              <span className="font-mono text-slate-400">
+                {primaryAccount?.account_number ? `Rek: ${primaryAccount.account_number}` : 'Tanpa No. Rek'}
+              </span>
+            </div>
+          </div>
+
+          <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 text-xs text-slate-600 space-y-1">
+            <div className="font-bold text-[#071A24]">Keterangan:</div>
+            <p>
+              Sistem menggunakan 1 Akun Kas Tunggal untuk mencatat seluruh arus kas masuk (penjualan) dan kas keluar (pembelian/operasional). Anda dapat mengubah nama akun atau memperbarui saldo kas langsung di bawah.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-slate-100">
+            <Button
+              variant="primary"
+              size="md"
+              icon={Edit2}
+              onClick={handleOpenEditAccount}
+              className="w-full sm:flex-1"
+            >
+              Ubah Data & Saldo Kas
+            </Button>
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => setActiveSection('overview')}
+              className="w-full sm:w-auto"
+            >
+              Selesai
+            </Button>
+          </div>
+        </div>
+      </BottomSheet>
+
+      {/* =========================================================================
+          MODAL EDIT AKUN KAS
+         ========================================================================= */}
+      <BottomSheet
+        isOpen={showEditAccountModal}
+        onClose={() => setShowEditAccountModal(false)}
+        title={
+          <div className="flex items-center gap-2 text-[#071A24]">
+            <Edit2 className="w-5 h-5 text-[#00D29E]" />
+            <span className="font-extrabold text-base">Ubah Data & Saldo Kas</span>
+          </div>
+        }
+        size="md"
+      >
+        <form onSubmit={handleSaveAccount} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-[#0F172A] mb-1.5">
+              Nama Akun Kas
+            </label>
+            <input
+              type="text"
+              value={editAccName}
+              onChange={(e) => setEditAccName(e.target.value)}
+              placeholder="Contoh: Kas Utama / BCA Usaha"
+              className="input-field rounded-xl"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-[#0F172A] mb-1.5">
+              Tipe Kas
+            </label>
+            <select
+              value={editAccType}
+              onChange={(e) => setEditAccType(e.target.value)}
+              className="input-field font-semibold rounded-xl"
+            >
+              <option value="cash">Kas Tunai (Fisik)</option>
+              <option value="bank">Rekening Bank</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-[#0F172A] mb-1.5">
+              Nomor Rekening (Opsional jika bank)
+            </label>
+            <input
+              type="text"
+              value={editAccNumber}
+              onChange={(e) => setEditAccNumber(e.target.value)}
+              placeholder="Contoh: 1234567890 (BCA)"
+              className="input-field font-mono rounded-xl"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-[#0F172A] mb-1.5">
+              Saldo Kas (Rp)
+            </label>
+            <input
+              type="number"
+              inputMode="numeric"
+              value={editAccBalance}
+              onChange={(e) => setEditAccBalance(e.target.value)}
+              placeholder="0"
+              className="input-field tabular-nums text-base font-bold rounded-xl"
+              required
+            />
+            <span className="text-[11px] text-slate-500 mt-1 block">
+              Perbarui nominal saldo kas riil usaha Anda saat ini.
+            </span>
+          </div>
+
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5 pt-3 border-t border-slate-100">
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => setShowEditAccountModal(false)}
+              className="w-full sm:w-auto"
+            >
+              Batal
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="md"
+              icon={Check}
+              className="w-full sm:w-auto shadow-xs"
+            >
+              Simpan Perubahan
+            </Button>
+          </div>
+        </form>
+      </BottomSheet>
+
+      {/* =========================================================================
+          SUB-VIEW MODAL: RESET DATABASE KE DATA RIIL
+         ========================================================================= */}
+      <BottomSheet
+        isOpen={activeSection === 'reset_confirm'}
+        onClose={() => setActiveSection('overview')}
+        title={
+          <div className="flex items-center gap-2 text-rose-600">
+            <AlertTriangle className="w-5 h-5 stroke-[2.5]" />
+            <span className="font-extrabold text-base">Reset Database (Mode Data Riil)</span>
+          </div>
+        }
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl space-y-2 text-xs text-rose-900 leading-relaxed">
+            <p className="font-extrabold text-sm text-rose-700 flex items-center gap-1.5">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              Konfirmasi Pengosongan Data Dummy
+            </p>
+            <p>
+              Tindakan ini akan <strong>menghapus permanen</strong> seluruh data dummy:
+            </p>
+            <ul className="list-disc pl-5 space-y-0.5 text-rose-800">
+              <li>Semua riwayat transaksi mutasi kas & dagang</li>
+              <li>Semua proyek perputaran modal (rotasi)</li>
+              <li>Semua histori penyesuaian & mutasi stok</li>
+              <li>Semua kontak rekanan & catatan operasional</li>
+            </ul>
+            <p className="pt-1 text-[11px] text-rose-700">
+              Setelah reset, sistem akan menyiapkan <strong>1 Akun Kas Utama (Saldo: Rp 0)</strong> dan katalog komoditas bersih dengan stok 0 yang siap Anda uji dengan data riil.
+            </p>
+          </div>
+
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5 pt-2 border-t border-slate-100">
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => setActiveSection('overview')}
+              className="w-full sm:w-auto"
+            >
+              Batalkan
+            </Button>
+            <Button
+              variant="danger"
+              size="md"
+              loading={isResetting}
+              icon={RotateCcw}
+              onClick={handleConfirmReset}
+              className="w-full sm:w-auto bg-rose-600 hover:bg-rose-700 text-white"
+            >
+              {isResetting ? 'Sedang Mereset...' : 'Ya, Reset Semua Data ke Mode Riil'}
+            </Button>
+          </div>
+        </div>
+      </BottomSheet>
 
       {/* =========================================================================
           SUB-VIEW MODAL: SUPABASE CLOUD DETAILS
@@ -568,137 +825,6 @@ export default function SettingsView() {
               icon={RefreshCw}
             >
               Sinkronkan Sekarang
-            </Button>
-          </div>
-        </div>
-      </BottomSheet>
-
-      {/* =========================================================================
-          SUB-VIEW MODAL: REKENING KAS & BANK
-         ========================================================================= */}
-      <BottomSheet
-        isOpen={activeSection === 'accounts'}
-        onClose={() => setActiveSection('overview')}
-        title={
-          <div className="flex items-center gap-2 text-[#064E3B]">
-            <Wallet className="w-5 h-5 text-[#D97706]" />
-            <span>Kelola Rekening Kas & Bank</span>
-          </div>
-        }
-        size="lg"
-      >
-        <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <span className="text-xs text-[#64748B]">
-              Daftar rekening operasional tunai dan perbankan
-            </span>
-            <Button
-              variant="primary"
-              size="sm"
-              icon={Plus}
-              onClick={() => setShowAccountModal(true)}
-            >
-              Tambah Akun
-            </Button>
-          </div>
-
-          <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl overflow-hidden bg-white">
-            {accounts?.map((acc) => (
-              <div key={acc.id} className="p-4 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-50 text-[#064E3B] flex items-center justify-center shrink-0 border border-emerald-100">
-                    <Wallet className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-sm text-[#0F172A]">{acc.name}</div>
-                    <div className="text-xs text-[#64748B]">
-                      {acc.type === 'cash' ? 'Kas Tunai' : 'Bank'} • Rek: {acc.account_number || '-'}
-                    </div>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-extrabold text-[#064E3B] tabular-nums">
-                    {formatCurrency(acc.balance)}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex justify-end pt-2 border-t border-slate-100">
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => setActiveSection('overview')}
-            >
-              Selesai
-            </Button>
-          </div>
-        </div>
-      </BottomSheet>
-
-      {/* =========================================================================
-          SUB-VIEW MODAL: KONTAK PELANGGAN & SUPPLIER
-         ========================================================================= */}
-      <BottomSheet
-        isOpen={activeSection === 'contacts'}
-        onClose={() => setActiveSection('overview')}
-        title={
-          <div className="flex items-center gap-2 text-[#064E3B]">
-            <Users className="w-5 h-5 text-blue-600" />
-            <span>Kontak Pelanggan & Supplier</span>
-          </div>
-        }
-        size="lg"
-      >
-        <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <span className="text-xs text-[#64748B]">
-              Daftar rekanan komoditas dan pelanggan setia
-            </span>
-            <Button
-              variant="primary"
-              size="sm"
-              icon={Plus}
-              onClick={() => setShowContactModal(true)}
-            >
-              Tambah Kontak
-            </Button>
-          </div>
-
-          <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl overflow-hidden bg-white max-h-[50vh] overflow-y-auto">
-            {contacts?.map((con) => (
-              <div key={con.id} className="p-4 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-slate-50 text-slate-700 flex items-center justify-center shrink-0 border border-slate-200/60">
-                    {con.type === 'customer' ? <UserCheck className="w-4 h-4" /> : <Building className="w-4 h-4" />}
-                  </div>
-                  <div>
-                    <div className="font-bold text-sm text-[#0F172A]">{con.name}</div>
-                    <div className="text-xs text-[#64748B] tabular-nums">
-                      {con.phone || 'Tanpa HP'} • {con.address || 'Tanpa Alamat'}
-                    </div>
-                  </div>
-                </div>
-                <span
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${con.type === 'customer'
-                    ? 'bg-[#ECFDF5] text-[#059669] border-[#A7F3D0]'
-                    : 'bg-[#FFFBEB] text-[#D97706] border-[#FDE68A]'
-                    }`}
-                >
-                  {con.type === 'customer' ? 'Pelanggan' : 'Supplier'}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex justify-end pt-2 border-t border-slate-100">
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => setActiveSection('overview')}
-            >
-              Selesai
             </Button>
           </div>
         </div>
@@ -890,7 +1016,7 @@ export default function SettingsView() {
             </div>
           )}
 
-          {/* TAB 2: CATATAN OPERASIONAL SELESAI (ANTI-LAG PAGINATION MAX 20 ITEMS) */}
+          {/* TAB 2: CATATAN OPERASIONAL SELESAI */}
           {notesTab === 'completed' && (
             <div className="space-y-3">
               <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl overflow-hidden bg-white max-h-[50vh] overflow-y-auto">
@@ -957,189 +1083,6 @@ export default function SettingsView() {
             </Button>
           </div>
         </div>
-      </BottomSheet>
-
-      {/* =========================================================================
-          MODAL TAMBAH AKUN KAS / BANK
-         ========================================================================= */}
-      <BottomSheet
-        isOpen={showAccountModal}
-        onClose={() => setShowAccountModal(false)}
-        title={
-          <div className="flex items-center gap-2 text-[#064E3B]">
-            <Wallet className="w-5 h-5 text-[#D97706]" />
-            <span>Tambah Akun Kas / Bank</span>
-          </div>
-        }
-        size="md"
-      >
-        <form onSubmit={handleCreateAccount} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-[#0F172A] mb-1.5">
-              Nama Akun
-            </label>
-            <input
-              type="text"
-              value={accName}
-              onChange={(e) => setAccName(e.target.value)}
-              placeholder="Contoh: Kas Utama Andi / BCA Bisnis"
-              className="input-field"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-[#0F172A] mb-1.5">
-              Tipe Akun
-            </label>
-            <select
-              value={accType}
-              onChange={(e) => setAccType(e.target.value)}
-              className="input-field font-medium"
-            >
-              <option value="cash">Kas Tunai (Fisik)</option>
-              <option value="bank">Rekening Bank</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-[#0F172A] mb-1.5">
-              Nomor Rekening (Opsional)
-            </label>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={accNumber}
-              onChange={(e) => setAccNumber(e.target.value)}
-              placeholder="Contoh: 1234567890"
-              className="input-field tabular-nums"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-[#0F172A] mb-1.5">
-              Saldo Awal (Rp)
-            </label>
-            <input
-              type="number"
-              inputMode="numeric"
-              value={accBalance}
-              onChange={(e) => setAccBalance(e.target.value)}
-              placeholder="0"
-              className="input-field tabular-nums"
-            />
-          </div>
-
-          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5 pt-3 border-t border-slate-100">
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => setShowAccountModal(false)}
-              className="w-full sm:w-auto"
-            >
-              Batal
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              size="md"
-              className="w-full sm:w-auto shadow-xs"
-            >
-              Simpan Akun
-            </Button>
-          </div>
-        </form>
-      </BottomSheet>
-
-      {/* =========================================================================
-          MODAL TAMBAH KONTAK
-         ========================================================================= */}
-      <BottomSheet
-        isOpen={showContactModal}
-        onClose={() => setShowContactModal(false)}
-        title={
-          <div className="flex items-center gap-2 text-[#064E3B]">
-            <Users className="w-5 h-5 text-[#D97706]" />
-            <span>Tambah Kontak Rekanan</span>
-          </div>
-        }
-        size="md"
-      >
-        <form onSubmit={handleCreateContact} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-[#0F172A] mb-1.5">
-              Nama Rekanan
-            </label>
-            <input
-              type="text"
-              value={conName}
-              onChange={(e) => setConName(e.target.value)}
-              placeholder="Nama toko, warung, atau supplier..."
-              className="input-field"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-[#0F172A] mb-1.5">
-              Tipe Rekanan
-            </label>
-            <select
-              value={conType}
-              onChange={(e) => setConType(e.target.value)}
-              className="input-field font-medium"
-            >
-              <option value="customer">Pelanggan (Customer)</option>
-              <option value="supplier">Supplier / Pemasok</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-[#0F172A] mb-1.5">
-              Nomor WhatsApp / HP
-            </label>
-            <input
-              type="tel"
-              inputMode="tel"
-              value={conPhone}
-              onChange={(e) => setConPhone(e.target.value)}
-              placeholder="0812-xxxx-xxxx"
-              className="input-field tabular-nums"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-[#0F172A] mb-1.5">
-              Alamat Lengkap
-            </label>
-            <input
-              type="text"
-              value={conAddress}
-              onChange={(e) => setConAddress(e.target.value)}
-              placeholder="Alamat toko, kandang, atau gudang..."
-              className="input-field"
-            />
-          </div>
-
-          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5 pt-3 border-t border-slate-100">
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => setShowContactModal(false)}
-              className="w-full sm:w-auto"
-            >
-              Batal
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              size="md"
-              className="w-full sm:w-auto shadow-xs"
-            >
-              Simpan Kontak
-            </Button>
-          </div>
-        </form>
       </BottomSheet>
     </div>
   );

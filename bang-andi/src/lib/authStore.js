@@ -1,14 +1,17 @@
 import { create } from 'zustand';
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import { syncFromSupabase } from './supabaseService.js';
+import { translateErrorMessage } from './errorHandler.js';
 
-export const useAuthStore = create((set, get) => ({
+export const useAuthStore = create((set) => ({
   user: null,
   session: null,
   loading: true,
   isConfigured: isSupabaseConfigured,
   isGuest: true,
   authError: null,
+  isAuthModalOpen: false,
+  setAuthModalOpen: (open) => set({ isAuthModalOpen: Boolean(open) }),
 
   initializeAuth: async () => {
     set({ loading: true });
@@ -21,7 +24,7 @@ export const useAuthStore = create((set, get) => ({
     }
 
     try {
-      const { data: { session }, error } = await supabase.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         set({ user: session.user, session, loading: false, isGuest: false });
         // Auto sync data on login
@@ -39,8 +42,7 @@ export const useAuthStore = create((set, get) => ({
           set({ user: null, session: null });
         }
       });
-    } catch (err) {
-      console.warn('Auth initialization error:', err);
+    } catch {
       set({ loading: false, isGuest: true });
     }
   },
@@ -66,16 +68,18 @@ export const useAuthStore = create((set, get) => ({
       });
 
       if (error) {
-        set({ loading: false, authError: error.message });
-        return { success: false, error: error.message };
+        const friendly = translateErrorMessage(error, 'Email atau kata sandi tidak valid.');
+        set({ loading: false, authError: friendly });
+        return { success: false, error: friendly };
       }
 
       set({ user: data.user, session: data.session, loading: false, isGuest: false });
       await syncFromSupabase();
       return { success: true };
     } catch (err) {
-      set({ loading: false, authError: err.message });
-      return { success: false, error: err.message };
+      const friendly = translateErrorMessage(err, 'Terjadi kendala saat login.');
+      set({ loading: false, authError: friendly });
+      return { success: false, error: friendly };
     }
   },
 
@@ -95,15 +99,17 @@ export const useAuthStore = create((set, get) => ({
       });
 
       if (error) {
-        set({ loading: false, authError: error.message });
-        return { success: false, error: error.message };
+        const friendly = translateErrorMessage(error, 'Gagal mendaftar akun.');
+        set({ loading: false, authError: friendly });
+        return { success: false, error: friendly };
       }
 
       set({ user: data.user, session: data.session, loading: false });
       return { success: true };
     } catch (err) {
-      set({ loading: false, authError: err.message });
-      return { success: false, error: err.message };
+      const friendly = translateErrorMessage(err, 'Terjadi kendala saat pendaftaran.');
+      set({ loading: false, authError: friendly });
+      return { success: false, error: friendly };
     }
   },
 

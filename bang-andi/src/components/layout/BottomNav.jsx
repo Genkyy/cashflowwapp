@@ -21,7 +21,7 @@ export default function BottomNav() {
 
   const navItems = [
     { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
-    { id: 'reports', label: 'Insights', icon: BarChart3 },
+    { id: 'reports', label: 'Laporan', icon: BarChart3 },
     { id: 'fab', label: '', isFab: true },
     { id: 'transactions', label: 'Transaksi', icon: Receipt },
     { id: 'stock', label: 'Stok', icon: Package },
@@ -39,7 +39,10 @@ export default function BottomNav() {
               <div key="fab" className="relative -top-3 flex flex-col items-center">
                 <button
                   type="button"
-                  onClick={() => setShowTransactionForm(true)}
+                  onClick={() => {
+                    setActiveTab('transactions');
+                    setShowTransactionForm(true);
+                  }}
                   className="w-13 h-13 rounded-full bg-gradient-to-tr from-[#00D29E] to-[#10B981] hover:brightness-105 active:scale-90 text-white flex items-center justify-center shadow-lg shadow-emerald-500/30 border-[3.5px] border-white transition-transform duration-150 touch-target focus:outline-none cursor-pointer"
                   aria-label="Catat Transaksi Baru"
                 >

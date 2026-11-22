@@ -1,32 +1,27 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useReports } from '../../hooks/useReports.js';
-import { formatCurrency, formatDate, formatWaLink } from '../../lib/formatters.js';
-import { exportToPDF, exportToCSV, generateWAMessage } from '../../lib/exporters.js';
-import { SkeletonCard, SkeletonTable } from '../ui/Skeleton.jsx';
-import EmptyState from '../ui/EmptyState.jsx';
-import LoadMoreButton from '../ui/LoadMoreButton.jsx';
-import usePagination from '../../hooks/usePagination.js';
+import { formatCurrency, formatDate } from '../../lib/formatters.js';
+import { exportToPDF, exportToCSV } from '../../lib/exporters.js';
+import { SkeletonCard } from '../ui/Skeleton.jsx';
+import BottomSheet from '../ui/BottomSheet.jsx';
 import {
   TrendingUp,
   DollarSign,
   FileSpreadsheet,
   FileText,
-  Send,
-  Clock,
   Package,
   Layers,
-  ChevronRight,
-  PieChart as PieChartIcon,
   BarChart3,
   Calendar,
+  Filter,
+  SlidersHorizontal,
+  ChevronDown,
+  Check,
+  RotateCcw,
   ArrowUpRight,
   ArrowDownLeft,
-  Filter,
-  CheckCircle2,
   AlertTriangle,
-  Info,
-  Sparkles,
-  ChevronDown
+  Sparkles
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -48,52 +43,128 @@ import {
  * - Stock Valuation with Moving Average HPP
  */
 export default function ReportsView() {
-  const { getProfitLoss, getCashFlow, getReceivables, getPayables, getStockValuation } = useReports();
+  const { getProfitLoss, getCashFlow, getStockValuation } = useReports();
 
-  // 1. Tab state: pl (Laba Rugi) | cashflow (Arus Kas) | debts (Piutang & Utang) | stock (Valuasi Stok)
+  // 1. Tab state: pl (Laba Rugi) | cashflow (Arus Kas) | stock (Valuasi Stok)
   const [activeReport, setActiveReport] = useState('pl');
-  const [debtSubTab, setDebtSubTab] = useState('receivables'); // receivables | payables
-  const [debtStatus, setDebtStatus] = useState('unpaid'); // unpaid ('Belum Lunas' - default) | paid ('Riwayat Lunas')
 
-  // 2. Dynamic Period Filter State
-  const now = new Date();
-  const [periodPreset, setPeriodPreset] = useState('this_month'); // this_month | last_month | this_quarter | this_year | all
+  // 2. Dynamic Period & Date Filter State (Bank-Grade Architecture)
+  const [now] = useState(() => new Date());
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
 
-  // Calculate actual Date Range based on preset
+  const [periodPreset, setPeriodPreset] = useState('this_month'); // this_month | last_month | last_30_days | this_quarter | this_year | custom | all
+  const [customStartDate, setCustomStartDate] = useState(() => {
+    return new Date(currentYear, currentMonth, 1).toISOString().slice(0, 10);
+  });
+  const [customEndDate, setCustomEndDate] = useState(() => {
+    return new Date(currentYear, currentMonth + 1, 0).toISOString().slice(0, 10);
+  });
+
+  // Modal temporary state
+  const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
+  const [tempPreset, setTempPreset] = useState('this_month');
+  const [tempStartDate, setTempStartDate] = useState(() => {
+    return new Date(currentYear, currentMonth, 1).toISOString().slice(0, 10);
+  });
+  const [tempEndDate, setTempEndDate] = useState(() => {
+    return new Date(currentYear, currentMonth + 1, 0).toISOString().slice(0, 10);
+  });
+
+  // Calculate actual Date Range based on preset & date inputs
   const dateRange = useMemo(() => {
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth();
-
+    if (periodPreset === 'all') {
+      return {
+        start: null,
+        end: null,
+        label: 'Semua Waktu',
+        displayRange: 'Semua Riwayat Transaksi',
+        subLabel: 'Semua'
+      };
+    }
+    if (periodPreset === 'custom') {
+      const start = customStartDate ? new Date(`${customStartDate}T00:00:00`).toISOString() : null;
+      const end = customEndDate ? new Date(`${customEndDate}T23:59:59`).toISOString() : null;
+      return {
+        start,
+        end,
+        label: `${formatDate(customStartDate, 'short')} s/d ${formatDate(customEndDate, 'short')}`,
+        displayRange: `${formatDate(customStartDate, 'short')} - ${formatDate(customEndDate, 'short')}`,
+        subLabel: 'Kustom',
+      };
+    }
     if (periodPreset === 'this_month') {
       const start = new Date(currentYear, currentMonth, 1).toISOString();
       const end = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59).toISOString();
-      return { start, end, label: 'Bulan Ini' };
+      return {
+        start,
+        end,
+        label: `Bulan Ini (${formatDate(start, 'short')} - ${formatDate(end, 'short')})`,
+        displayRange: `${formatDate(start, 'short')} - ${formatDate(end, 'short')}`,
+        subLabel: 'Bulan Ini',
+      };
     }
     if (periodPreset === 'last_month') {
       const start = new Date(currentYear, currentMonth - 1, 1).toISOString();
       const end = new Date(currentYear, currentMonth, 0, 23, 59, 59).toISOString();
-      return { start, end, label: 'Bulan Lalu' };
+      return {
+        start,
+        end,
+        label: `Bulan Lalu (${formatDate(start, 'short')} - ${formatDate(end, 'short')})`,
+        displayRange: `${formatDate(start, 'short')} - ${formatDate(end, 'short')}`,
+        subLabel: 'Bulan Lalu',
+      };
+    }
+    if (periodPreset === 'last_30_days') {
+      const d30 = new Date();
+      d30.setDate(d30.getDate() - 30);
+      d30.setHours(0, 0, 0, 0);
+      const start = d30.toISOString();
+      const end = new Date().toISOString();
+      return {
+        start,
+        end,
+        label: `30 Hari Terakhir (${formatDate(start, 'short')} - ${formatDate(end, 'short')})`,
+        displayRange: `${formatDate(start, 'short')} - ${formatDate(end, 'short')}`,
+        subLabel: '30 Hari',
+      };
     }
     if (periodPreset === 'this_quarter') {
       const quarterStartMonth = Math.floor(currentMonth / 3) * 3;
       const start = new Date(currentYear, quarterStartMonth, 1).toISOString();
       const end = new Date(currentYear, quarterStartMonth + 3, 0, 23, 59, 59).toISOString();
-      return { start, end, label: 'Kuartal Berjalan (3 Bulan)' };
+      return {
+        start,
+        end,
+        label: `Kuartal Berjalan (${formatDate(start, 'short')} - ${formatDate(end, 'short')})`,
+        displayRange: `${formatDate(start, 'short')} - ${formatDate(end, 'short')}`,
+        subLabel: 'Kuartal Ini',
+      };
     }
     if (periodPreset === 'this_year') {
       const start = new Date(currentYear, 0, 1).toISOString();
       const end = new Date(currentYear, 11, 31, 23, 59, 59).toISOString();
-      return { start, end, label: `Tahun ${currentYear}` };
+      return {
+        start,
+        end,
+        label: `Tahun ${currentYear} (${formatDate(start, 'short')} - ${formatDate(end, 'short')})`,
+        displayRange: `${formatDate(start, 'short')} - ${formatDate(end, 'short')}`,
+        subLabel: `Tahun ${currentYear}`,
+      };
     }
-    // all
-    return { start: null, end: null, label: 'Semua Waktu' };
-  }, [periodPreset]);
+    // all fallback
+    return {
+      start: null,
+      end: null,
+      label: 'Semua Waktu',
+      displayRange: 'Semua Riwayat Transaksi',
+      subLabel: 'Semua'
+    };
+  }, [periodPreset, customStartDate, customEndDate, currentYear, currentMonth]);
 
   // Report Data State
   const [plData, setPlData] = useState(null);
   const [cfData, setCfData] = useState(null);
-  const [recData, setRecData] = useState(null);
-  const [payData, setPayData] = useState(null);
   const [valData, setValData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -101,60 +172,24 @@ export default function ReportsView() {
   const loadReports = useCallback(async () => {
     setLoading(true);
     try {
-      const [pl, cf, rec, pay, val] = await Promise.all([
+      const [pl, cf, val] = await Promise.all([
         getProfitLoss(dateRange.start, dateRange.end),
         getCashFlow(dateRange.start, dateRange.end),
-        getReceivables(),
-        getPayables(),
         getStockValuation(),
       ]);
       setPlData(pl);
       setCfData(cf);
-      setRecData(rec);
-      setPayData(pay);
       setValData(val);
     } catch (err) {
       console.error('Error loading reports:', err);
     } finally {
       setLoading(false);
     }
-  }, [getProfitLoss, getCashFlow, getReceivables, getPayables, getStockValuation, dateRange]);
+  }, [getProfitLoss, getCashFlow, getStockValuation, dateRange]);
 
   useEffect(() => {
     loadReports();
   }, [loadReports]);
-
-  // Current active debt lists (Unpaid & Paid)
-  const currentUnpaidList = useMemo(() => {
-    if (debtSubTab === 'receivables') return recData?.list || [];
-    return payData?.list || [];
-  }, [debtSubTab, recData, payData]);
-
-  const currentPaidList = useMemo(() => {
-    if (debtSubTab === 'receivables') return recData?.paidList || [];
-    return payData?.paidList || [];
-  }, [debtSubTab, recData, payData]);
-
-  // Anti-Lag Pagination: 20 items initial view, reset on tab/period changes
-  const {
-    displayedItems: paginatedUnpaidList,
-    remainingCount: remainingUnpaid,
-    loadMore: loadMoreUnpaid,
-  } = usePagination(currentUnpaidList, {
-    initialLimit: 20,
-    step: 20,
-    resetDependencies: [debtSubTab, debtStatus, periodPreset],
-  });
-
-  const {
-    displayedItems: paginatedPaidList,
-    remainingCount: remainingPaid,
-    loadMore: loadMorePaid,
-  } = usePagination(currentPaidList, {
-    initialLimit: 20,
-    step: 20,
-    resetDependencies: [debtSubTab, debtStatus, periodPreset],
-  });
 
   // PDF Export
   const handleExportPDF = () => {
@@ -176,27 +211,6 @@ export default function ReportsView() {
           { key: 'laba_bersih', header: 'Laba Bersih' },
         ],
         'laporan_laba_rugi_amanah_barokah.pdf'
-      );
-    } else if (activeReport === 'debts' && recData) {
-      exportToPDF(
-        'Rekap Piutang Usaha Pelanggan - CV Amanah Barokah',
-        recData.list.map((r) => ({
-          faktur: r.invoice_number,
-          pelanggan: r.contactName,
-          tanggal: formatDate(r.date),
-          total: formatCurrency(r.total_amount),
-          sisa: formatCurrency(r.remaining),
-          umur: `${r.daysOutstanding} hari`,
-        })),
-        [
-          { key: 'faktur', header: 'No. Faktur' },
-          { key: 'pelanggan', header: 'Pelanggan' },
-          { key: 'tanggal', header: 'Tanggal' },
-          { key: 'total', header: 'Total Faktur' },
-          { key: 'sisa', header: 'Sisa Piutang' },
-          { key: 'umur', header: 'Umur Piutang' },
-        ],
-        'rekap_piutang_amanah_barokah.pdf'
       );
     } else if (activeReport === 'cashflow' && cfData) {
       exportToPDF(
@@ -247,27 +261,12 @@ export default function ReportsView() {
         null,
         'laba_rugi_komoditas.csv'
       );
-    } else if (activeReport === 'debts' && recData) {
-      exportToCSV(
-        recData.list.map((r) => ({
-          Faktur: r.invoice_number,
-          Pelanggan: r.contactName,
-          Telepon: r.contactPhone,
-          Tanggal: formatDate(r.date, 'iso'),
-          Total: r.total_amount,
-          Sisa_Piutang: r.remaining,
-          Umur_Hari: r.daysOutstanding,
-        })),
-        null,
-        'rekap_piutang.csv'
-      );
     }
   };
 
   const reportTabs = [
     { id: 'pl', label: 'Laba Rugi', icon: TrendingUp },
     { id: 'cashflow', label: 'Arus Kas', icon: DollarSign },
-    { id: 'debts', label: 'Piutang & Utang', icon: Clock },
     { id: 'stock', label: 'Valuasi Stok', icon: Package },
   ];
 
@@ -325,7 +324,7 @@ export default function ReportsView() {
             Analisis & Performa Bisnis
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 font-medium">
-            Laba rugi komoditas, arus kas riil, pelunasan tempo, dan valuasi aset persediaan.
+            Laba rugi komoditas, arus kas riil, dan valuasi aset persediaan.
           </p>
         </div>
 
@@ -357,7 +356,7 @@ export default function ReportsView() {
           2. FLOWMINT SEGMENTED TABS (No text wrapping, clean icon chips)
          ========================================================================= */}
       <div className="bg-white rounded-3xl p-2 border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)]">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+        <div className="grid grid-cols-3 gap-1.5">
           {reportTabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeReport === tab.id;
@@ -381,46 +380,44 @@ export default function ReportsView() {
       </div>
 
       {/* =========================================================================
-          3. FUNCTIONAL PERIOD SELECTOR (Truly updates data when clicked)
+          3. ELEGANT BANK-GRADE PERIOD SELECTOR (Ala Livin' Mandiri / BCA)
          ========================================================================= */}
-      <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] space-y-2.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider">
-            <Calendar className="w-3.5 h-3.5 text-[#00D29E]" />
-            <span>Periode Laporan</span>
+      <button
+        type="button"
+        onClick={() => {
+          setTempPreset(periodPreset);
+          setTempStartDate(customStartDate);
+          setTempEndDate(customEndDate);
+          setIsFilterModalOpen(true);
+        }}
+        className="w-full bg-white hover:bg-slate-50/90 active:scale-[0.99] border border-slate-200/80 rounded-2xl p-3 sm:px-4 shadow-2xs flex items-center justify-between gap-3 transition cursor-pointer group"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0 group-hover:bg-[#071A24] group-hover:text-[#00D29E] transition">
+            <Calendar className="w-4 h-4 stroke-[2.2]" />
           </div>
-          <span className="text-xs font-bold text-[#00D29E]">
-            Aktif: {dateRange.label}
-          </span>
+          <div className="text-left min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                Periode Laporan
+              </span>
+              <span className="text-[10px] font-black px-1.5 py-0.2 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200/60 shrink-0">
+                {dateRange.subLabel}
+              </span>
+            </div>
+            <div className="text-xs sm:text-sm font-extrabold text-[#071A24] truncate">
+              {dateRange.displayRange}
+            </div>
+          </div>
         </div>
 
-        {/* Real Dynamic Period Chips */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-          {[
-            { id: 'this_month', label: 'Bulan Ini' },
-            { id: 'last_month', label: 'Bulan Lalu' },
-            { id: 'this_quarter', label: 'Kuartal Ini (3 Bln)' },
-            { id: 'this_year', label: 'Tahun Ini' },
-            { id: 'all', label: 'Semua Periode' },
-          ].map((preset) => {
-            const isSelected = periodPreset === preset.id;
-            return (
-              <button
-                key={preset.id}
-                type="button"
-                onClick={() => setPeriodPreset(preset.id)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
-                  isSelected
-                    ? 'bg-[#071A24] text-white shadow-xs'
-                    : 'bg-slate-100/80 text-slate-600 hover:bg-slate-200/70'
-                }`}
-              >
-                {preset.label}
-              </button>
-            );
-          })}
+        <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/90 group-hover:bg-slate-200 text-xs font-bold text-slate-700 transition shrink-0 border border-slate-200/60">
+          <SlidersHorizontal className="w-3.5 h-3.5 text-[#00D29E]" />
+          <span className="hidden sm:inline">Ubah Periode</span>
+          <span className="sm:hidden">Ubah</span>
+          <ChevronDown className="w-3 h-3 text-slate-400 group-hover:text-slate-600 transition" />
         </div>
-      </div>
+      </button>
 
       {/* Loading Skeleton */}
       {loading && (
@@ -553,8 +550,8 @@ export default function ReportsView() {
                 <div className="text-right self-start sm:self-auto">
                   <span className="text-xs text-slate-400 block">Rata-rata ROI</span>
                   <span className="text-lg sm:text-xl font-black text-[#00D29E] tabular-nums">
-                    {plData.rotationTotalCapital > 0
-                      ? `${((plData.rotationGrossProfit / plData.rotationTotalCapital) * 100).toFixed(1)}%`
+                    {Number(plData.rotationTotalCapital) > 0
+                      ? `${(((Number(plData.rotationGrossProfit) || 0) / Number(plData.rotationTotalCapital)) * 100).toFixed(1)}%`
                       : '0%'}
                   </span>
                 </div>
@@ -606,16 +603,17 @@ export default function ReportsView() {
 
             {/* Horizontal Bar */}
             {(() => {
-              const totalRev = Math.max(plData.totalRevenue, 1);
-              const itemsList = plData.commodityBreakdown;
+              const totalRev = Number(plData.totalRevenue) || 0;
+              const itemsList = Array.isArray(plData.commodityBreakdown) ? plData.commodityBreakdown : [];
 
               return (
                 <div className="space-y-4">
                   {/* Single Smooth Continuous Bar */}
                   <div className="w-full h-6 bg-slate-100 rounded-full flex overflow-hidden border border-slate-200/60 p-0.5 gap-0.5">
                     {itemsList.map((c) => {
-                      const share = (c.revenue / totalRev) * 100;
-                      const displayShare = share > 0 ? share : (100 / itemsList.length);
+                      const cRev = Number(c.revenue) || 0;
+                      const share = totalRev > 0 ? (cRev / totalRev) * 100 : 0;
+                      const displayShare = share > 0 ? share : (itemsList.length > 0 ? 100 / itemsList.length : 0);
                       const barColor = commodityColors[c.name] || '#64748B';
 
                       return (
@@ -623,10 +621,10 @@ export default function ReportsView() {
                           key={c.id}
                           className="h-full rounded-full transition-all duration-300 relative group cursor-pointer"
                           style={{
-                            width: `${displayShare}%`,
+                            width: `${Math.max(0, Math.min(100, displayShare))}%`,
                             backgroundColor: barColor
                           }}
-                          title={`${c.name}: ${formatCurrency(c.revenue)} (${displayShare.toFixed(1)}%)`}
+                          title={`${c.name}: ${formatCurrency(cRev)} (${displayShare.toFixed(1)}%)`}
                         />
                       );
                     })}
@@ -635,8 +633,9 @@ export default function ReportsView() {
                   {/* Commodity Cards Grid */}
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 pt-1">
                     {itemsList.map((c) => {
+                      const cRev = Number(c.revenue) || 0;
                       const barColor = commodityColors[c.name] || '#64748B';
-                      const share = plData.totalRevenue > 0 ? ((c.revenue / plData.totalRevenue) * 100).toFixed(0) : 0;
+                      const share = totalRev > 0 ? ((cRev / totalRev) * 100).toFixed(0) : '0';
 
                       return (
                         <div
@@ -685,8 +684,10 @@ export default function ReportsView() {
 
             {/* Mobile Stacked Card View (No horizontal scrolling!) */}
             <div className="sm:hidden divide-y divide-slate-100">
-              {plData.commodityBreakdown.map((c) => {
-                const margin = c.revenue > 0 ? ((c.grossProfit / c.revenue) * 100).toFixed(1) : '0';
+              {(plData.commodityBreakdown || []).map((c) => {
+                const rev = Number(c.revenue) || 0;
+                const gross = Number(c.grossProfit) || 0;
+                const margin = rev > 0 ? ((gross / rev) * 100).toFixed(1) : '0.0';
                 return (
                   <div key={c.id} className="p-4 space-y-2.5">
                     <div className="flex items-center justify-between">
@@ -734,8 +735,10 @@ export default function ReportsView() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium">
-                  {plData.commodityBreakdown.map((c) => {
-                    const margin = c.revenue > 0 ? ((c.grossProfit / c.revenue) * 100).toFixed(1) : '0';
+                  {(plData.commodityBreakdown || []).map((c) => {
+                    const rev = Number(c.revenue) || 0;
+                    const gross = Number(c.grossProfit) || 0;
+                    const margin = rev > 0 ? ((gross / rev) * 100).toFixed(1) : '0.0';
                     return (
                       <tr key={c.id} className="hover:bg-slate-50/70 transition">
                         <td className="px-5 py-4 font-bold text-[#071A24] flex items-center gap-2">
@@ -893,7 +896,9 @@ export default function ReportsView() {
               {/* Expense Categories List */}
               <div className="space-y-2">
                 {expenseData.map((exp) => {
-                  const percent = totalExpenseAmount > 0 ? ((exp.value / totalExpenseAmount) * 100).toFixed(1) : 0;
+                  const expVal = Number(exp.value) || 0;
+                  const totExp = Number(totalExpenseAmount) || 0;
+                  const percent = totExp > 0 ? ((expVal / totExp) * 100).toFixed(1) : '0.0';
                   return (
                     <div
                       key={exp.name}
@@ -923,430 +928,7 @@ export default function ReportsView() {
       )}
 
       {/* =========================================================================
-          TAB 3: PIUTANG & UTANG (BILLING & AGING ANALYSIS)
-         ========================================================================= */}
-      {!loading && activeReport === 'debts' && (
-        <div className="space-y-4 animate-in fade-in duration-200">
-          {/* Dual Segmented Controls: Sub-Type & Status (Belum Lunas vs Riwayat Lunas) */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            {/* Sub Switch: Piutang vs Utang */}
-            <div className="inline-flex p-1 bg-slate-100 rounded-2xl border border-slate-200/60 self-start">
-              <button
-                type="button"
-                onClick={() => setDebtSubTab('receivables')}
-                className={`px-4 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                  debtSubTab === 'receivables' ? 'bg-[#071A24] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Piutang Pelanggan ({debtStatus === 'unpaid' ? recData?.list?.length || 0 : recData?.paidList?.length || 0})
-              </button>
-              <button
-                type="button"
-                onClick={() => setDebtSubTab('payables')}
-                className={`px-4 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                  debtSubTab === 'payables' ? 'bg-[#071A24] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Utang Supplier ({debtStatus === 'unpaid' ? payData?.list?.length || 0 : payData?.paidList?.length || 0})
-              </button>
-            </div>
-
-            {/* Smart Segmented Control Status: Belum Lunas (default aktif) vs Riwayat Lunas */}
-            <div className="inline-flex p-1 bg-slate-100 rounded-2xl border border-slate-200/60 self-start sm:self-auto">
-              <button
-                type="button"
-                onClick={() => setDebtStatus('unpaid')}
-                className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                  debtStatus === 'unpaid'
-                    ? 'bg-[#071A24] text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span className="w-2 h-2 rounded-full bg-amber-500" />
-                <span>Belum Lunas</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                  debtStatus === 'unpaid' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
-                }`}>
-                  {debtSubTab === 'receivables' ? recData?.list?.length || 0 : payData?.list?.length || 0}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setDebtStatus('paid')}
-                className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                  debtStatus === 'paid'
-                    ? 'bg-[#00D29E] text-[#071A24] font-black shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-600" />
-                <span>Riwayat Lunas</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                  debtStatus === 'paid' ? 'bg-[#071A24]/15 text-[#071A24]' : 'bg-slate-200 text-slate-700'
-                }`}>
-                  {debtSubTab === 'receivables' ? recData?.paidList?.length || 0 : payData?.paidList?.length || 0}
-                </span>
-              </button>
-            </div>
-          </div>
-
-          {/* =========================================================================
-              VIEW 1: BELUM LUNAS (ACTIVE BILLING & AGING)
-             ========================================================================= */}
-          {debtStatus === 'unpaid' && (
-            <>
-              {/* Sub Tab: Piutang */}
-              {debtSubTab === 'receivables' && recData && (
-                <div className="space-y-4">
-                  {/* Aging Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    {[
-                      { label: '0-30 Hari', val: recData.aging.current, color: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
-                      { label: '31-60 Hari', val: recData.aging.days30, color: 'text-amber-700 bg-amber-50 border-amber-200' },
-                      { label: '61-90 Hari', val: recData.aging.days60, color: 'text-orange-700 bg-orange-50 border-orange-200' },
-                      { label: '> 90 Hari (Macet)', val: recData.aging.days90Plus, color: 'text-rose-700 bg-rose-50 border-rose-200' },
-                    ].map((ag, i) => (
-                      <div key={i} className={`p-3.5 rounded-2xl border ${ag.color}`}>
-                        <span className="text-[10px] font-bold block mb-1 uppercase tracking-wide">{ag.label}</span>
-                        <span className="text-sm sm:text-base font-black tabular-nums">{formatCurrency(ag.val)}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Invoices List */}
-                  <div className="bg-white rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] overflow-hidden">
-                    <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-                      <h3 className="font-bold text-[#071A24] text-sm tracking-tight">
-                        Daftar Piutang Pelanggan ({recData.list.length} Tagihan Belum Lunas)
-                      </h3>
-                      <span className="text-xs font-black text-amber-600 tabular-nums">
-                        Total: {formatCurrency(recData.totalReceivable)}
-                      </span>
-                    </div>
-
-                    {recData.list.length === 0 ? (
-                      <div className="p-8 text-center text-slate-400 text-xs font-medium">
-                        Semua piutang pelanggan telah lunas.
-                      </div>
-                    ) : (
-                      <>
-                        {/* Mobile Stacked Invoice Cards (No horizontal scroll!) */}
-                        <div className="sm:hidden divide-y divide-slate-100">
-                          {paginatedUnpaidList.map((r) => {
-                            const waMsg = generateWAMessage('tagihan', {
-                              contactName: r.contactName,
-                              invoiceNumber: r.invoice_number,
-                              date: r.date,
-                              dueDate: r.due_date,
-                              totalAmount: r.total_amount,
-                              paidAmount: r.paid_amount,
-                              remainingAmount: r.remaining,
-                            });
-                            const waLink = formatWaLink(r.contactPhone || '08123456789', waMsg);
-
-                            return (
-                              <div key={r.id} className="p-4 space-y-3">
-                                <div className="flex items-center justify-between">
-                                  <div>
-                                    <div className="font-extrabold text-sm text-[#071A24]">{r.contactName}</div>
-                                    <div className="text-xs text-slate-400 font-mono mt-0.5">
-                                      {r.invoice_number} • {formatDate(r.date, 'short')}
-                                    </div>
-                                  </div>
-                                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 tabular-nums">
-                                    {r.daysOutstanding} hari
-                                  </span>
-                                </div>
-
-                                <div className="flex items-center justify-between p-2.5 rounded-2xl bg-amber-50/40 border border-amber-100">
-                                  <div>
-                                    <span className="text-[10px] text-slate-500 font-semibold uppercase block">Total Faktur</span>
-                                    <span className="text-xs font-bold text-slate-600 tabular-nums">{formatCurrency(r.total_amount)}</span>
-                                  </div>
-                                  <div className="text-right">
-                                    <span className="text-[10px] text-amber-800 font-bold uppercase block">Sisa Tagihan</span>
-                                    <span className="text-sm font-black text-amber-600 tabular-nums">{formatCurrency(r.remaining)}</span>
-                                  </div>
-                                </div>
-
-                                <a
-                                  href={waLink}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="w-full min-h-[38px] flex items-center justify-center gap-1.5 py-2 px-3 bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-xl text-xs font-bold transition ios-spring-tap shadow-2xs"
-                                >
-                                  <Send className="w-3.5 h-3.5" />
-                                  <span>Kirim Pengingat Tagihan via WhatsApp</span>
-                                </a>
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {/* Desktop Table */}
-                        <div className="hidden sm:block overflow-x-auto">
-                          <table className="w-full text-left text-xs sm:text-sm">
-                            <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-100">
-                              <tr>
-                                <th className="px-5 py-3.5">Faktur & Tanggal</th>
-                                <th className="px-5 py-3.5">Pelanggan</th>
-                                <th className="px-5 py-3.5 text-right">Total Transaksi</th>
-                                <th className="px-5 py-3.5 text-right">Sisa Piutang</th>
-                                <th className="px-5 py-3.5 text-center">Umur</th>
-                                <th className="px-5 py-3.5 text-center">Kirim Pengingat</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 font-medium">
-                              {paginatedUnpaidList.map((r) => {
-                                const waMsg = generateWAMessage('tagihan', {
-                                  contactName: r.contactName,
-                                  invoiceNumber: r.invoice_number,
-                                  date: r.date,
-                                  dueDate: r.due_date,
-                                  totalAmount: r.total_amount,
-                                  paidAmount: r.paid_amount,
-                                  remainingAmount: r.remaining,
-                                });
-                                const waLink = formatWaLink(r.contactPhone || '08123456789', waMsg);
-
-                                return (
-                                  <tr key={r.id} className="hover:bg-slate-50/70 transition">
-                                    <td className="px-5 py-4">
-                                      <div className="font-bold text-[#071A24]">{r.invoice_number}</div>
-                                      <div className="text-xs text-slate-400 tabular-nums">{formatDate(r.date, 'short')}</div>
-                                    </td>
-                                    <td className="px-5 py-4 font-semibold text-[#071A24]">
-                                      {r.contactName}
-                                      {r.contactPhone && (
-                                        <div className="text-[11px] text-slate-400 tabular-nums">{r.contactPhone}</div>
-                                      )}
-                                    </td>
-                                    <td className="px-5 py-4 text-right text-slate-600 tabular-nums">
-                                      {formatCurrency(r.total_amount)}
-                                    </td>
-                                    <td className="px-5 py-4 text-right font-black text-amber-600 tabular-nums">
-                                      {formatCurrency(r.remaining)}
-                                    </td>
-                                    <td className="px-5 py-4 text-center">
-                                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 tabular-nums">
-                                        {r.daysOutstanding} hari
-                                      </span>
-                                    </td>
-                                    <td className="px-5 py-4 text-center">
-                                      <a
-                                        href={waLink}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-xl text-xs font-bold transition ios-spring-tap"
-                                      >
-                                        <Send className="w-3.5 h-3.5" />
-                                        <span>Kirim WA</span>
-                                      </a>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-
-                        {/* Anti-Lag Load More Button for Unpaid Receivables */}
-                        <LoadMoreButton
-                          remainingCount={remainingUnpaid}
-                          onClick={loadMoreUnpaid}
-                        />
-                      </>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Sub Tab: Utang */}
-              {debtSubTab === 'payables' && payData && (
-                <div className="bg-white rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] overflow-hidden">
-                  <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-                    <h3 className="font-bold text-[#071A24] text-sm tracking-tight">
-                      Rekap Utang Usaha ke Supplier ({payData.list.length} Faktur Belum Lunas)
-                    </h3>
-                    <span className="text-xs font-black text-rose-600 tabular-nums">
-                      Total: {formatCurrency(payData.totalPayable)}
-                    </span>
-                  </div>
-
-                  {payData.list.length === 0 ? (
-                    <div className="p-8 text-center text-slate-400 text-xs font-medium">
-                      Semua utang supplier telah dilunasi.
-                    </div>
-                  ) : (
-                    <>
-                      {/* Mobile Stacked Payables Cards */}
-                      <div className="sm:hidden divide-y divide-slate-100">
-                        {paginatedUnpaidList.map((p) => (
-                          <div key={p.id} className="p-4 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <div className="font-extrabold text-sm text-[#071A24]">{p.contactName}</div>
-                              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 tabular-nums">
-                                {p.daysOutstanding} hari
-                              </span>
-                            </div>
-                            <div className="text-xs text-slate-400 font-mono">{p.invoice_number}</div>
-                            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                              <span className="text-xs text-slate-500 font-medium">Total: {formatCurrency(p.total_amount)}</span>
-                              <div className="text-right">
-                                <span className="text-[10px] text-rose-500 font-bold block">Sisa Utang:</span>
-                                <span className="text-sm font-black text-rose-600 tabular-nums">{formatCurrency(p.remaining)}</span>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Desktop Table */}
-                      <div className="hidden sm:block overflow-x-auto">
-                        <table className="w-full text-left text-xs sm:text-sm">
-                          <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-100">
-                            <tr>
-                              <th className="px-5 py-3.5">Faktur & Tanggal</th>
-                              <th className="px-5 py-3.5">Supplier</th>
-                              <th className="px-5 py-3.5 text-right">Total Transaksi</th>
-                              <th className="px-5 py-3.5 text-right">Sisa Utang</th>
-                              <th className="px-5 py-3.5 text-center">Umur Utang</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 font-medium">
-                            {paginatedUnpaidList.map((p) => (
-                              <tr key={p.id} className="hover:bg-slate-50/70 transition">
-                                <td className="px-5 py-4 font-bold text-[#071A24]">{p.invoice_number}</td>
-                                <td className="px-5 py-4 font-semibold text-[#071A24]">{p.contactName}</td>
-                                <td className="px-5 py-4 text-right text-slate-600 tabular-nums">
-                                  {formatCurrency(p.total_amount)}
-                                </td>
-                                <td className="px-5 py-4 text-right font-black text-rose-600 tabular-nums">
-                                  {formatCurrency(p.remaining)}
-                                </td>
-                                <td className="px-5 py-4 text-center">
-                                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 tabular-nums">
-                                    {p.daysOutstanding} hari
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-
-                      {/* Anti-Lag Load More Button for Unpaid Payables */}
-                      <LoadMoreButton
-                        remainingCount={remainingUnpaid}
-                        onClick={loadMoreUnpaid}
-                      />
-                    </>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* =========================================================================
-              VIEW 2: RIWAYAT LUNAS (ANTI-LAG PAGINATION MAX 20 ITEMS)
-             ========================================================================= */}
-          {debtStatus === 'paid' && (
-            <div className="bg-white rounded-3xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                  <h3 className="font-bold text-[#071A24] text-sm tracking-tight">
-                    {debtSubTab === 'receivables' ? 'Riwayat Piutang Lunas' : 'Riwayat Utang Lunas'} ({currentPaidList.length} Transaksi Selesai)
-                  </h3>
-                </div>
-                <span className="text-xs font-black text-emerald-600 tabular-nums">
-                  Status: Lunas 100%
-                </span>
-              </div>
-
-              {currentPaidList.length === 0 ? (
-                <EmptyState
-                  icon={CheckCircle2}
-                  title="Belum Ada Riwayat Pelunasan"
-                  description="Faktur yang statusnya telah lunas akan otomatis diarsipkan di riwayat ini agar layar utama tetap bersih."
-                />
-              ) : (
-                <>
-                  {/* Mobile Stacked Paid Cards */}
-                  <div className="sm:hidden divide-y divide-slate-100">
-                    {paginatedPaidList.map((item) => (
-                      <div key={item.id} className="p-4 space-y-2 hover:bg-slate-50/70 transition">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-extrabold text-sm text-[#071A24]">{item.contactName}</div>
-                            <div className="text-xs text-slate-400 font-mono mt-0.5">
-                              {item.invoice_number} • {formatDate(item.date, 'short')}
-                            </div>
-                          </div>
-                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3" />
-                            <span>Lunas</span>
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                          <span className="text-xs text-slate-500 font-medium">Nominal Faktur:</span>
-                          <span className="text-sm font-black text-[#071A24] tabular-nums">
-                            {formatCurrency(item.total_amount)}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Desktop Table for Paid History */}
-                  <div className="hidden sm:block overflow-x-auto">
-                    <table className="w-full text-left text-xs sm:text-sm">
-                      <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-100">
-                        <tr>
-                          <th className="px-5 py-3.5">Faktur & Tanggal</th>
-                          <th className="px-5 py-3.5">{debtSubTab === 'receivables' ? 'Pelanggan' : 'Supplier'}</th>
-                          <th className="px-5 py-3.5 text-right">Total Transaksi</th>
-                          <th className="px-5 py-3.5 text-center">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 font-medium">
-                        {paginatedPaidList.map((item) => (
-                          <tr key={item.id} className="hover:bg-slate-50/70 transition">
-                            <td className="px-5 py-4">
-                              <div className="font-bold text-[#071A24]">{item.invoice_number}</div>
-                              <div className="text-xs text-slate-400 tabular-nums">{formatDate(item.date, 'short')}</div>
-                            </td>
-                            <td className="px-5 py-4 font-semibold text-[#071A24]">{item.contactName}</td>
-                            <td className="px-5 py-4 text-right font-black text-[#071A24] tabular-nums">
-                              {formatCurrency(item.total_amount)}
-                            </td>
-                            <td className="px-5 py-4 text-center">
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                <CheckCircle2 className="w-3 h-3" />
-                                <span>Lunas</span>
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Anti-Lag Load More Button: Max 20 items per click */}
-                  <LoadMoreButton
-                    remainingCount={remainingPaid}
-                    onClick={loadMorePaid}
-                  />
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* =========================================================================
-          TAB 4: VALUASI STOK (INVENTORY ASSETS)
+          TAB 3: VALUASI STOK (INVENTORY ASSETS)
          ========================================================================= */}
       {!loading && activeReport === 'stock' && valData && (
         <div className="space-y-4 animate-in fade-in duration-200">
@@ -1488,6 +1070,163 @@ export default function ReportsView() {
           </div>
         </div>
       )}
+
+      {/* =========================================================================
+          MODAL FILTER TANGGAL ALA MOBILE BANKING (BCA / Livin' Style BottomSheet)
+         ========================================================================= */}
+      <BottomSheet
+        isOpen={isFilterModalOpen}
+        onClose={() => setIsFilterModalOpen(false)}
+        title={
+          <div className="flex items-center gap-2 text-[#071A24]">
+            <div className="w-7 h-7 rounded-xl bg-emerald-50 text-[#00D29E] flex items-center justify-center">
+              <Calendar className="w-4 h-4 stroke-[2.2]" />
+            </div>
+            <span className="font-extrabold text-base">Atur Periode & Tanggal</span>
+          </div>
+        }
+        size="md"
+      >
+        <div className="space-y-4 pt-1">
+          {/* Pilihan Cepat Preset Ala Bank */}
+          <div>
+            <label className="block text-[11px] font-extrabold text-slate-400 uppercase tracking-wider mb-2">
+              Pilihan Cepat
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {[
+                { id: 'this_month', label: 'Bulan Ini' },
+                { id: 'last_month', label: 'Bulan Lalu' },
+                { id: 'last_30_days', label: '30 Hari Terakhir' },
+                { id: 'this_quarter', label: 'Kuartal Ini' },
+                { id: 'this_year', label: `Tahun ${now.getFullYear()}` },
+                { id: 'all', label: 'Semua Waktu' },
+              ].map((p) => {
+                const isSelected = tempPreset === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      setTempPreset(p.id);
+                      const curY = now.getFullYear();
+                      const curM = now.getMonth();
+                      if (p.id === 'this_month') {
+                        setTempStartDate(new Date(curY, curM, 1).toISOString().slice(0, 10));
+                        setTempEndDate(new Date(curY, curM + 1, 0).toISOString().slice(0, 10));
+                      } else if (p.id === 'last_month') {
+                        setTempStartDate(new Date(curY, curM - 1, 1).toISOString().slice(0, 10));
+                        setTempEndDate(new Date(curY, curM, 0).toISOString().slice(0, 10));
+                      } else if (p.id === 'last_30_days') {
+                        const d30 = new Date();
+                        d30.setDate(d30.getDate() - 30);
+                        setTempStartDate(d30.toISOString().slice(0, 10));
+                        setTempEndDate(new Date().toISOString().slice(0, 10));
+                      } else if (p.id === 'this_quarter') {
+                        const qM = Math.floor(curM / 3) * 3;
+                        setTempStartDate(new Date(curY, qM, 1).toISOString().slice(0, 10));
+                        setTempEndDate(new Date(curY, qM + 3, 0).toISOString().slice(0, 10));
+                      } else if (p.id === 'this_year') {
+                        setTempStartDate(new Date(curY, 0, 1).toISOString().slice(0, 10));
+                        setTempEndDate(new Date(curY, 11, 31).toISOString().slice(0, 10));
+                      }
+                    }}
+                    className={`p-2.5 rounded-xl text-xs font-bold text-left transition border cursor-pointer flex items-center justify-between ${
+                      isSelected
+                        ? 'bg-[#071A24] text-white border-[#071A24] shadow-xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200/80 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>{p.label}</span>
+                    {isSelected && <Check className="w-3.5 h-3.5 text-[#00D29E]" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Atur Rentang Tanggal Khusus (Dari - Sampai) */}
+          <div className="bg-slate-50/80 rounded-2xl p-3 sm:p-3.5 border border-slate-200/80 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-[#00D29E]" />
+                <span>Pilih Tanggal Bebas (Dari - Sampai)</span>
+              </span>
+              {tempPreset === 'custom' && (
+                <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                  Kustom Aktif
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  Dari Tanggal
+                </label>
+                <input
+                  type="date"
+                  value={tempStartDate}
+                  onChange={(e) => {
+                    setTempStartDate(e.target.value);
+                    setTempPreset('custom');
+                  }}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-[#071A24] tabular-nums focus:outline-none focus:border-[#00D29E] focus:ring-1 focus:ring-[#00D29E] transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  Sampai Tanggal
+                </label>
+                <input
+                  type="date"
+                  value={tempEndDate}
+                  onChange={(e) => {
+                    setTempEndDate(e.target.value);
+                    setTempPreset('custom');
+                  }}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-[#071A24] tabular-nums focus:outline-none focus:border-[#00D29E] focus:ring-1 focus:ring-[#00D29E] transition"
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Format tanggal fleksibel persis seperti mutasi bank untuk keperluan audit pembukuan.
+            </p>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-2.5 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                const curY = now.getFullYear();
+                const curM = now.getMonth();
+                setTempPreset('this_month');
+                setTempStartDate(new Date(curY, curM, 1).toISOString().slice(0, 10));
+                setTempEndDate(new Date(curY, curM + 1, 0).toISOString().slice(0, 10));
+              }}
+              className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+              <span>Reset</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPeriodPreset(tempPreset);
+                setCustomStartDate(tempStartDate);
+                setCustomEndDate(tempEndDate);
+                setIsFilterModalOpen(false);
+              }}
+              className="flex-1 py-2.5 rounded-xl bg-[#071A24] hover:bg-[#0B2533] text-white font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer shadow-xs"
+            >
+              <Check className="w-4 h-4 text-[#00D29E]" />
+              <span>Terapkan Filter</span>
+            </button>
+          </div>
+        </div>
+      </BottomSheet>
     </div>
   );
 }

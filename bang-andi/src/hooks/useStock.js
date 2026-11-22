@@ -5,6 +5,12 @@ import { db } from '../lib/db.js';
 import { calculateMovingAverageHPP } from '../lib/hpp.js';
 import { convertToBaseUnit } from '../lib/units.js';
 import { useLiveQuery, notifyDatabaseChange } from './useLiveQuery.js';
+import {
+  createSupabaseProduct,
+  updateSupabaseProduct,
+  deleteSupabaseProduct,
+  adjustSupabaseStock,
+} from '../lib/supabaseService.js';
 
 export function getAllItemsQuery() {
   return db.items.toArray();
@@ -109,7 +115,16 @@ export function useStock() {
       const baseQty = convertToBaseUnit(inputQty, targetUnit, allConversions);
 
       const currentStock = Number(item.stock) || 0;
-      const newStock = Math.max(0, currentStock - baseQty);
+      if (inputQty <= 0) {
+        throw new Error('Jumlah stok keluar harus lebih dari 0.');
+      }
+      if (currentStock <= 0) {
+        throw new Error(`Stok barang "${item.name}" sedang KOSONG (0 ${item.base_unit || ''}). Silakan input stok masuk terlebih dahulu.`);
+      }
+      if (currentStock < baseQty) {
+        throw new Error(`Stok barang "${item.name}" tidak mencukupi (Tersedia: ${currentStock} ${item.base_unit || ''}, diminta: ${baseQty} ${targetUnit}). Silakan input stok masuk terlebih dahulu.`);
+      }
+      const newStock = currentStock - baseQty;
       const now = new Date();
 
       await db.items.update(item.id, {
@@ -147,12 +162,17 @@ export function useStock() {
    * deltaQty can be negative or positive
    */
   const adjustStock = useCallback(async (itemId, deltaQty, reason = 'Penyesuaian Stok', notes = '') => {
-    return await db.transaction('rw', [db.items, db.stock_mutations, db.audit_log], async () => {
+    const result = await db.transaction('rw', [db.items, db.stock_mutations, db.audit_log], async () => {
       const item = await db.items.get(Number(itemId) || itemId);
       if (!item) throw new Error('Komoditas/Barang tidak ditemukan');
 
       const delta = Number(deltaQty) || 0;
       const currentStock = Number(item.stock) || 0;
+      if (currentStock + delta < 0) {
+        throw new Error(
+          `Penyesuaian stok tidak valid: stok akhir tidak boleh minus (Stok saat ini: ${currentStock} ${item.base_unit || ''}, pengurangan: ${Math.abs(delta)}).`
+        );
+      }
       const newStock = Math.max(0, currentStock + delta);
       const now = new Date();
 
@@ -184,6 +204,14 @@ export function useStock() {
       notifyDatabaseChange();
       return { newStock };
     });
+
+    try {
+      await adjustSupabaseStock(itemId, deltaQty, reason, notes);
+    } catch {
+      // Offline fallback
+    }
+
+    return result;
   }, []);
 
   /**
@@ -240,6 +268,318 @@ export function useStock() {
     });
   }, []);
 
+  /**
+   * Create a new stock item (Katalog Komoditas / Barang Baru)
+   */
+  const createItem = useCallback(
+    async ({
+      name,
+      commodity_id,
+      newCommodityName,
+      base_unit = 'kg',
+      stock = 0,
+      hpp = 0,
+      selling_price = 0,
+      min_stock = 0,
+      is_perishable = false,
+      is_livestock = false,
+      conversions = [],
+    }) => {
+      return await db.transaction(
+        'rw',
+        [db.items, db.commodities, db.stock_mutations, db.unit_conversions, db.audit_log],
+        async () => {
+          const now = new Date();
+          let targetCommodityId = commodity_id;
+
+          // If user provided a new commodity category name
+          if (newCommodityName && newCommodityName.trim()) {
+            const trimmedName = newCommodityName.trim();
+            const existingCom = await db.commodities
+              .filter((c) => (c.name || '').toLowerCase() === trimmedName.toLowerCase())
+              .first();
+
+            if (existingCom) {
+              targetCommodityId = existingCom.id;
+            } else {
+              targetCommodityId = await db.commodities.add({
+                id_str: `com-${nanoid(6)}`,
+                name: trimmedName,
+                icon: 'Package',
+                color: '#00D29E',
+                created_at: now.toISOString(),
+              });
+            }
+          }
+
+          const stockNum = Math.max(0, Number(stock) || 0);
+          const hppNum = Math.max(0, Number(hpp) || 0);
+          const sellNum = Math.max(0, Number(selling_price) || 0);
+          const minStockNum = Math.max(0, Number(min_stock) || 0);
+
+          // Generate unique item code
+          const cleanPrefix = (name || 'ITM')
+            .trim()
+            .replace(/[^a-zA-Z0-9]/g, '')
+            .slice(0, 3)
+            .toUpperCase();
+          const code = `ITM-${cleanPrefix || 'GEN'}-${nanoid(4).toUpperCase()}`;
+
+          const newItemId = await db.items.add({
+            code,
+            commodity_id: targetCommodityId ? (Number(targetCommodityId) || targetCommodityId) : null,
+            name: (name || '').trim(),
+            base_unit: (base_unit || 'unit').trim().toLowerCase(),
+            stock: stockNum,
+            hpp: hppNum,
+            selling_price: sellNum,
+            min_stock: minStockNum,
+            is_perishable: is_perishable ? 1 : 0,
+            is_livestock: is_livestock ? 1 : 0,
+            is_active: 1,
+            created_at: now.toISOString(),
+            updated_at: now.toISOString(),
+          });
+
+          // Record initial stock mutation if stock > 0
+          if (stockNum > 0) {
+            await db.stock_mutations.add({
+              code: nanoid(10),
+              item_id: newItemId,
+              type: 'in',
+              qty: stockNum,
+              unit: (base_unit || 'unit').trim().toLowerCase(),
+              previous_stock: 0,
+              new_stock: stockNum,
+              date: now.toISOString(),
+              notes: `Saldo Stok Awal Barang Baru: ${stockNum} ${base_unit}`,
+            });
+          }
+
+          // Save conversions if any
+          if (Array.isArray(conversions) && conversions.length > 0) {
+            for (const conv of conversions) {
+              if (conv.unit_name && Number(conv.factor) > 0) {
+                await db.unit_conversions.add({
+                  item_id: newItemId,
+                  unit_name: conv.unit_name.trim(),
+                  factor: Number(conv.factor),
+                  label: `1 ${conv.unit_name} = ${conv.factor} ${base_unit}`,
+                });
+              }
+            }
+          }
+
+          await db.audit_log.add({
+            timestamp: now.toISOString(),
+            action: 'create_item',
+            entity_type: 'item',
+            entity_id: newItemId,
+            details: { name, stock: stockNum, hpp: hppNum, selling_price: sellNum },
+          });
+
+          notifyDatabaseChange();
+          return newItemId;
+        }
+      );
+
+      // Sync to Supabase in background if online
+      try {
+        await createSupabaseProduct({
+          id: resultId,
+          name,
+          commodity_id,
+          base_unit,
+          stock,
+          hpp,
+          selling_price,
+          min_stock,
+          is_perishable,
+          is_livestock,
+        });
+      } catch {
+        // Handled silently
+      }
+
+      return resultId;
+    },
+    []
+  );
+
+  /**
+   * Update an existing stock item (Ubah Nama, Jumlah Stok, Harga, dsb)
+   */
+  const updateItem = useCallback(
+    async (
+      itemId,
+      {
+        name,
+        commodity_id,
+        newCommodityName,
+        base_unit,
+        stock,
+        hpp,
+        selling_price,
+        min_stock,
+        is_perishable,
+        is_livestock,
+        conversions = null,
+      }
+    ) => {
+      const resultId = await db.transaction(
+        'rw',
+        [db.items, db.commodities, db.stock_mutations, db.unit_conversions, db.audit_log],
+        async () => {
+          const item = await db.items.get(Number(itemId) || itemId);
+          if (!item) throw new Error('Barang/Komoditas tidak ditemukan');
+
+          const now = new Date();
+          let targetCommodityId = commodity_id !== undefined ? commodity_id : item.commodity_id;
+
+          // If new commodity category is entered
+          if (newCommodityName && newCommodityName.trim()) {
+            const trimmedName = newCommodityName.trim();
+            const existingCom = await db.commodities
+              .filter((c) => (c.name || '').toLowerCase() === trimmedName.toLowerCase())
+              .first();
+
+            if (existingCom) {
+              targetCommodityId = existingCom.id;
+            } else {
+              targetCommodityId = await db.commodities.add({
+                id_str: `com-${nanoid(6)}`,
+                name: trimmedName,
+                icon: 'Package',
+                color: '#00D29E',
+                created_at: now.toISOString(),
+              });
+            }
+          }
+
+          const currentStock = Number(item.stock) || 0;
+          const newStock = stock !== undefined ? Math.max(0, Number(stock) || 0) : currentStock;
+          const diff = newStock - currentStock;
+
+          // Record stock mutation if quantity was updated directly
+          if (diff !== 0) {
+            await db.stock_mutations.add({
+              code: nanoid(10),
+              item_id: item.id,
+              type: diff > 0 ? 'in' : 'out',
+              qty: Math.abs(diff),
+              unit: (base_unit || item.base_unit || 'unit').trim().toLowerCase(),
+              previous_stock: currentStock,
+              new_stock: newStock,
+              date: now.toISOString(),
+              notes: `Perubahan Jumlah Stok: ${currentStock} → ${newStock} (${diff > 0 ? '+' : ''}${diff})`,
+            });
+          }
+
+          const updatedFields = {
+            updated_at: now.toISOString(),
+          };
+
+          if (name !== undefined) updatedFields.name = name.trim();
+          if (targetCommodityId !== undefined) {
+            updatedFields.commodity_id = targetCommodityId ? (Number(targetCommodityId) || targetCommodityId) : null;
+          }
+          if (base_unit !== undefined) updatedFields.base_unit = base_unit.trim().toLowerCase();
+          if (stock !== undefined) updatedFields.stock = newStock;
+          if (hpp !== undefined) updatedFields.hpp = Math.max(0, Number(hpp) || 0);
+          if (selling_price !== undefined) updatedFields.selling_price = Math.max(0, Number(selling_price) || 0);
+          if (min_stock !== undefined) updatedFields.min_stock = Math.max(0, Number(min_stock) || 0);
+          if (is_perishable !== undefined) updatedFields.is_perishable = is_perishable ? 1 : 0;
+          if (is_livestock !== undefined) updatedFields.is_livestock = is_livestock ? 1 : 0;
+
+          await db.items.update(item.id, updatedFields);
+
+          // Update conversions if provided
+          if (Array.isArray(conversions)) {
+            // Remove previous conversions for this item
+            await db.unit_conversions.where('item_id').equals(item.id).delete();
+            for (const conv of conversions) {
+              if (conv.unit_name && Number(conv.factor) > 0) {
+                await db.unit_conversions.add({
+                  item_id: item.id,
+                  unit_name: conv.unit_name.trim(),
+                  factor: Number(conv.factor),
+                  label: `1 ${conv.unit_name} = ${conv.factor} ${updatedFields.base_unit || item.base_unit}`,
+                });
+              }
+            }
+          }
+
+          await db.audit_log.add({
+            timestamp: now.toISOString(),
+            action: 'update_item',
+            entity_type: 'item',
+            entity_id: item.id,
+            details: { updatedFields, diff },
+          });
+
+          notifyDatabaseChange();
+          return item.id;
+        }
+      );
+
+      // Sync to Supabase
+      try {
+        await updateSupabaseProduct(itemId, {
+          name,
+          commodity_id,
+          base_unit,
+          stock,
+          hpp,
+          selling_price,
+          min_stock,
+          is_perishable,
+          is_livestock,
+        });
+      } catch {
+        // Offline
+      }
+
+      return resultId;
+    },
+    []
+  );
+
+  /**
+   * Delete or archive a stock item
+   */
+  const deleteItem = useCallback(
+    async (itemId) => {
+      const res = await db.transaction('rw', [db.items, db.unit_conversions, db.audit_log], async () => {
+        const item = await db.items.get(Number(itemId) || itemId);
+        if (!item) throw new Error('Barang tidak ditemukan');
+
+        // Delete item and its conversions
+        await db.unit_conversions.where('item_id').equals(item.id).delete();
+        await db.items.delete(item.id);
+
+        await db.audit_log.add({
+          timestamp: new Date().toISOString(),
+          action: 'delete_item',
+          entity_type: 'item',
+          entity_id: item.id,
+          details: { name: item.name },
+        });
+
+        notifyDatabaseChange();
+        return true;
+      });
+
+      try {
+        await deleteSupabaseProduct(itemId);
+      } catch {
+        // Offline
+      }
+
+      return res;
+    },
+    []
+  );
+
   return {
     items,
     addStockIn,
@@ -247,6 +587,9 @@ export function useStock() {
     adjustStock,
     getStockAlerts,
     updateLivestockWeight,
+    createItem,
+    updateItem,
+    deleteItem,
   };
 }
 

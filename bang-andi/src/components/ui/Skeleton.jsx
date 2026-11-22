@@ -51,7 +51,7 @@ export function SkeletonCard({ className = '' }) {
   );
 }
 
-export function SkeletonTable({ rows = 5, cols = 4, className = '' }) {
+export function SkeletonTable({ rows = 5, _cols = 4, className = '' }) {
   return (
     <div className={`bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden ${className}`}>
       <div className="p-4 border-b border-slate-100 flex items-center justify-between">

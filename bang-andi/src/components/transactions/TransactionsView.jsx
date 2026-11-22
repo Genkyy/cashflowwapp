@@ -24,8 +24,6 @@ import {
   ArrowLeftRight,
   Calendar,
   AlertTriangle,
-  User,
-  CreditCard,
   TrendingUp,
   TrendingDown,
   Sparkles,
@@ -40,22 +38,23 @@ import {
   Layers,
   ChevronRight,
   Eye,
-  ArrowLeft,
-  ArrowRight,
-  Copy
+  Copy,
+  Wallet,
+  Zap,
+  Package
 } from 'lucide-react';
-import { Button } from '../ui/Button.jsx';
-import { BottomSheet } from '../ui/BottomSheet.jsx';
+import BottomSheet from '../ui/BottomSheet.jsx';
 import { SkeletonCard } from '../ui/Skeleton.jsx';
 import { EmptyState } from '../ui/EmptyState.jsx';
 import { LoadMoreButton } from '../ui/LoadMoreButton.jsx';
 import CapitalRotationsView from './CapitalRotationsView.jsx';
+import { translateErrorMessage } from '../../lib/errorHandler.js';
 
 /**
  * FlowMint-style Modern Transactions & Cash Flow View
  * Consistent with DashboardView:
  * - FlowMint Midnight Navy & Mint Green palette (#071A24, #00D29E)
- * - Hero stats row (Omset Penjualan, Total Pengeluaran, Tagihan/Piutang Tempo, Kas Bersih)
+ * - Hero stats row (Uang Masuk, Uang Keluar, Kas Bersih)
  * - Modern Pill Segmented Filters with counters
  * - FlowMint Inset Cards with high visual clarity, micro-badges, and receipt previews
  * - Streamlined BottomSheet modal for quick transaction entry
@@ -67,38 +66,35 @@ export default function TransactionsView() {
     defaultTransactionType,
     setDefaultTransactionType
   } = useAppStore();
-  const { voidTransaction, addInstallment } = useTransactions();
+  const { voidTransaction } = useTransactions();
 
   // 1. Live Queries
   const transactions = useLiveQuery(() => db.transactions.toArray(), [], []);
-  const installments = useLiveQuery(() => db.installments ? db.installments.toArray() : [], [], []);
   const accounts = useLiveQuery(() => db.accounts.toArray(), [], []);
-  const contacts = useLiveQuery(() => db.contacts.toArray(), [], []);
   const items = useLiveQuery(() => db.items.toArray(), [], []);
 
-  // 2. Main View Mode: 'rotations' (Proyek Rotasi Modal) | 'transactions' (Kasir/Dagang Ritel)
-  const [mainTab, setMainTab] = useState('rotations');
+  // 2. Main View Mode: 'transactions' (Kasir/Dagang Ritel) | 'rotations' (Proyek Rotasi Modal)
+  const [mainTab, setMainTab] = useState('transactions');
 
   // 3. Banking Timeline Filter & Search State
   const [selectedPeriod, setSelectedPeriod] = useState('this_month'); // this_month (Anti-Lag default) | all | last_30_days
   const [search, setSearch] = useState('');
-  const [filterType, setFilterType] = useState('all'); // all | income | expense | transfer | credit
-  const [filterPayment, setFilterPayment] = useState('all'); // all | paid | partial | credit
+  const [filterType, setFilterType] = useState('all'); // all | income | expense
   const [sortBy, setSortBy] = useState('newest'); // newest | oldest | highest | lowest
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [selectedTxDetail, setSelectedTxDetail] = useState(null); // Digital Receipt Slip modal
   const [copiedInvoice, setCopiedInvoice] = useState(false);
 
+  const primaryAccount = accounts?.[0] || null;
+
   // Dynamic count of secondary active filters
   const activeFilterCount =
-    (filterPayment !== 'all' ? 1 : 0) +
     (sortBy !== 'newest' ? 1 : 0) +
     (selectedPeriod !== 'this_month' ? 1 : 0);
 
   const handleResetFilters = () => {
     setSelectedPeriod('this_month');
     setFilterType('all');
-    setFilterPayment('all');
     setSortBy('newest');
     setSearch('');
   };
@@ -107,26 +103,19 @@ export default function TransactionsView() {
   const [viewingReceiptUrl, setViewingReceiptUrl] = useState(null);
   const [voidingTx, setVoidingTx] = useState(null);
   const [voidReason, setVoidReason] = useState('');
-  const [payingTx, setPayingTx] = useState(null);
-  const [payAmount, setPayAmount] = useState('');
-  const [payAccount, setPayAccount] = useState('');
+  const [isVoiding, setIsVoiding] = useState(false);
 
-  // 4. Form State (Progressive Disclosure)
-  const [txType, setTxType] = useState('income'); // income | expense | transfer
-  const [subType, setSubType] = useState('sale');
-  const [enableCreditOption, setEnableCreditOption] = useState(false);
-  const [enableReceiptUpload, setEnableReceiptUpload] = useState(false);
-  const [enableNotes, setEnableNotes] = useState(false);
+  // 4. Form State (Streamlined, Fast & Stock-Safe)
+  const [txType, setTxType] = useState('income'); // income | expense
+  const [entryMode, setEntryMode] = useState('quick'); // 'quick' (Kas Cepat) | 'stock' (Komoditas Berstok)
+  const [quickAmount, setQuickAmount] = useState('');
+  const [quickCategory, setQuickCategory] = useState('Operasional');
+  const [quickNotes, setQuickNotes] = useState('');
+  const [customCategory, setCustomCategory] = useState('');
 
-  const [contactId, setContactId] = useState('');
-  const [accountId, setAccountId] = useState('');
-  const [toAccountId, setToAccountId] = useState('');
-  const [txDate, setTxDate] = useState(new Date().toISOString().slice(0, 10));
-  const [dueDate, setDueDate] = useState('');
-  const [paymentOption, setPaymentOption] = useState('paid'); // paid | partial | credit
-  const [dpAmount, setDpAmount] = useState('');
+  const [txDate, setTxDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
-  const [categoryName, setCategoryName] = useState('');
+  const categoryName = '';
 
   // Line items
   const [lineItems, setLineItems] = useState([
@@ -143,39 +132,30 @@ export default function TransactionsView() {
   useEffect(() => {
     if (defaultTransactionType) {
       setTxType(defaultTransactionType);
-      setSubType(
-        defaultTransactionType === 'income'
-          ? 'sale'
-          : defaultTransactionType === 'expense'
-            ? 'purchase'
-            : 'transfer'
-      );
+      if (defaultTransactionType === 'expense') {
+        setEntryMode('quick');
+        setQuickCategory('BBM / Bensin');
+      } else {
+        setEntryMode('quick');
+        setQuickCategory('Penjualan Tunai');
+      }
     }
     if (showTransactionForm) {
       setMainTab('transactions');
     }
   }, [defaultTransactionType, showTransactionForm]);
 
-  // Set default account when accounts loaded
-  useEffect(() => {
-    if (accounts && accounts.length > 0 && !accountId) {
-      setAccountId(accounts[0].id);
-    }
-  }, [accounts, accountId]);
-
   // Quick stats calculation dynamically reacting to selectedPeriod
-  const now = new Date();
+  const [now] = useState(() => new Date());
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
 
   const metrics = useMemo(() => {
     let income = 0;
     let expense = 0;
-    let unpaidTotal = 0;
-    let unpaidCount = 0;
     let totalCount = 0;
 
-    const thirtyDaysAgo = new Date();
+    const thirtyDaysAgo = new Date(now);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     thirtyDaysAgo.setHours(0, 0, 0, 0);
 
@@ -198,53 +178,18 @@ export default function TransactionsView() {
       return true; // 'all'
     };
 
-    // Group installments by transaction_id to track exact cash in/out dates
-    const installmentsByTx = new Map();
-    (installments || []).forEach((inst) => {
-      if (!installmentsByTx.has(inst.transaction_id)) {
-        installmentsByTx.set(inst.transaction_id, []);
-      }
-      installmentsByTx.get(inst.transaction_id).push(inst);
-    });
-
     (transactions || []).forEach((t) => {
       if (t.status === 'void') return;
       totalCount++;
 
-      const txInstList = installmentsByTx.get(t.id);
-
       if (t.type !== 'transfer') {
-        if (txInstList && txInstList.length > 0) {
-          // If transaction has installment records (DP + subsequent payments)
-          txInstList.forEach((inst) => {
-            if (checkPeriodMatch(inst.date)) {
-              const amt = Number(inst.amount) || 0;
-              if (t.type === 'income') {
-                income += amt;
-              } else if (t.type === 'expense' && t.sub_type !== 'transfer') {
-                expense += amt;
-              }
-            }
-          });
-        } else {
-          // Direct cash payment without separate installments record
-          if (checkPeriodMatch(t.date)) {
-            const paid = Number(t.paid_amount) || 0;
-            if (t.type === 'income') {
-              income += paid;
-            } else if (t.type === 'expense' && t.sub_type !== 'transfer') {
-              expense += paid;
-            }
+        if (checkPeriodMatch(t.date)) {
+          const amt = Number(t.total_amount) || Number(t.paid_amount) || 0;
+          if (t.type === 'income') {
+            income += amt;
+          } else if (t.type === 'expense' && t.sub_type !== 'transfer') {
+            expense += amt;
           }
-        }
-      }
-
-      // Unpaid pending receivables / payables tracking
-      if (t.payment_status !== 'paid') {
-        const remaining = (Number(t.total_amount) || 0) - (Number(t.paid_amount) || 0);
-        if (remaining > 0) {
-          unpaidTotal += remaining;
-          unpaidCount++;
         }
       }
     });
@@ -253,18 +198,11 @@ export default function TransactionsView() {
       income,
       expense,
       net: income - expense,
-      unpaidTotal,
-      unpaidCount,
       totalCount
     };
-  }, [transactions, installments, selectedPeriod, currentMonth, currentYear]);
+  }, [transactions, selectedPeriod, currentMonth, currentYear, now]);
 
-  // Map contacts for fast lookup
-  const contactMap = useMemo(() => {
-    const map = new Map();
-    (contacts || []).forEach((c) => map.set(String(c.id), c.name));
-    return map;
-  }, [contacts]);
+
 
   // Line item handlers
   const handleItemChange = (idx, field, value) => {
@@ -312,17 +250,67 @@ export default function TransactionsView() {
   };
 
   // Form total calculation
-  const totalAmount = lineItems.reduce((acc, it) => acc + (Number(it.subtotal) || 0), 0);
-  const paidAmount =
-    paymentOption === 'paid'
-      ? totalAmount
-      : paymentOption === 'partial'
-        ? Number(dpAmount) || 0
-        : 0;
+  const totalAmount = useMemo(() => {
+    if (entryMode === 'quick') {
+      return Math.round(Number(quickAmount) || 0);
+    }
+    return lineItems.reduce((acc, it) => acc + (Number(it.subtotal) || 0), 0);
+  }, [entryMode, quickAmount, lineItems]);
+
+  // Real-time stock validation check for commodity selling
+  const stockValidationErrors = useMemo(() => {
+    if (entryMode !== 'stock' || txType !== 'income') return [];
+    const errors = [];
+    lineItems.forEach((it, idx) => {
+      if (!it.product_id) return;
+      const prod = items?.find((p) => String(p.id) === String(it.product_id));
+      if (!prod) return;
+      const curStock = Number(prod.stock) || 0;
+      const reqQty = Number(it.qty) || 0;
+      if (curStock <= 0) {
+        errors.push({
+          idx,
+          productId: prod.id,
+          productName: prod.name,
+          unit: prod.base_unit || 'unit',
+          curStock: 0,
+          type: 'empty',
+          message: `Stok "${prod.name}" KOSONG (0 ${prod.base_unit || ''}). Tidak bisa dijual sebelum ada stok masuk / pembelian.`,
+        });
+      } else if (reqQty > curStock) {
+        errors.push({
+          idx,
+          productId: prod.id,
+          productName: prod.name,
+          unit: prod.base_unit || 'unit',
+          curStock,
+          reqQty,
+          type: 'insufficient',
+          message: `Kuantitas (${reqQty} ${prod.base_unit || ''}) melebihi stok yang ada (Tersedia: ${curStock} ${prod.base_unit || ''}).`,
+        });
+      }
+    });
+    return errors;
+  }, [entryMode, txType, lineItems, items]);
+
+  const hasStockError = stockValidationErrors.length > 0;
 
   // Save Transaction
   const handleSaveTransaction = async (e) => {
     e.preventDefault();
+    if (totalAmount <= 0) {
+      alert('Nominal transaksi harus lebih dari 0.');
+      return;
+    }
+    if (entryMode === 'stock' && hasStockError) {
+      alert(stockValidationErrors[0].message);
+      return;
+    }
+    if (entryMode === 'stock' && lineItems.some((it) => !it.product_id || Number(it.qty) <= 0)) {
+      alert('Silakan pilih komoditas dan isi kuantitas dengan benar.');
+      return;
+    }
+
     setIsUploading(true);
 
     try {
@@ -332,35 +320,53 @@ export default function TransactionsView() {
         uploadedReceiptUrl = uploadResult.url;
       }
 
+      const isQuick = entryMode === 'quick';
+      const actualSubType = isQuick
+        ? (txType === 'income' ? 'sales' : 'operational')
+        : (txType === 'income' ? 'sale' : 'purchase');
+
+      const resolvedCategory = isQuick
+        ? (quickCategory === 'Lainnya' && customCategory.trim() ? customCategory.trim() : quickCategory)
+        : (categoryName.trim() || (txType === 'income' ? 'Penjualan Komoditas' : 'Kulakan Stok'));
+
+      const actualNotes = isQuick
+        ? quickNotes.trim()
+        : notes.trim();
+
       await createSupabaseTransaction({
         type: txType,
-        sub_type: subType,
-        contact_id: contactId || null,
-        account_id: accountId || accounts?.[0]?.id || null,
-        to_account_id: txType === 'transfer' ? toAccountId : null,
+        sub_type: actualSubType,
+        contact_id: null,
+        account_id: primaryAccount?.id || accounts?.[0]?.id || null,
+        to_account_id: null,
         total_amount: totalAmount,
-        paid_amount: enableCreditOption ? paidAmount : totalAmount,
-        payment_status: enableCreditOption ? paymentOption : 'paid',
+        paid_amount: totalAmount,
+        payment_status: 'paid',
         date: txDate,
-        due_date: enableCreditOption && paymentOption !== 'paid' ? dueDate : null,
-        category_name: categoryName,
-        notes: enableNotes ? notes : '',
+        due_date: null,
+        category: resolvedCategory,
+        category_name: resolvedCategory,
+        notes: actualNotes,
         receipt_url: uploadedReceiptUrl,
-        items: lineItems.filter((it) => it.product_id && it.qty > 0),
+        items: isQuick ? [] : lineItems.filter((it) => it.product_id && it.qty > 0),
       });
 
       // Reset form
       setShowTransactionForm(false);
       setReceiptFile(null);
       setReceiptPreview('');
+      setQuickAmount('');
+      setQuickNotes('');
+      setCustomCategory('');
       setLineItems([{ product_id: '', name: '', qty: 1, unit: '', unit_price: 0, subtotal: 0 }]);
       setNotes('');
-      setDpAmount('');
-      setEnableCreditOption(false);
-      setEnableReceiptUpload(false);
-      setEnableNotes(false);
+      addNotification({
+        message: `Transaksi sebesar Rp ${totalAmount.toLocaleString('id-ID')} berhasil disimpan.`,
+        type: 'success',
+      });
     } catch (err) {
-      alert('Gagal menyimpan transaksi: ' + err.message);
+      const friendly = translateErrorMessage(err, 'Gagal menyimpan transaksi. Pastikan data terisi dengan benar.');
+      alert(friendly);
     } finally {
       setIsUploading(false);
     }
@@ -368,7 +374,7 @@ export default function TransactionsView() {
 
   // Filtered & Sorted Transactions (Bank Timeline Style)
   const filteredTransactions = useMemo(() => {
-    const thirtyDaysAgo = new Date();
+    const thirtyDaysAgo = new Date(now);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     thirtyDaysAgo.setHours(0, 0, 0, 0);
 
@@ -391,25 +397,18 @@ export default function TransactionsView() {
         }
 
         // Type filter
-        if (filterType === 'credit') {
-          if (tx.payment_status === 'paid' || tx.status === 'void') return false;
-        } else if (filterType !== 'all') {
+        if (filterType !== 'all') {
           if (tx.type !== filterType) return false;
         }
-
-        // Payment status filter
-        if (filterPayment !== 'all' && tx.payment_status !== filterPayment) return false;
 
         // Search text
         if (search.trim()) {
           const q = search.toLowerCase();
           const matchInv = (tx.invoice_number || '').toLowerCase().includes(q);
           const matchNotes = (tx.notes || '').toLowerCase().includes(q);
-          const contactName = contactMap.get(String(tx.contact_id)) || '';
-          const matchContact = contactName.toLowerCase().includes(q);
           const matchCategory = (tx.category || tx.sub_type || '').toLowerCase().includes(q);
           const matchAmount = String(tx.total_amount || '').includes(q);
-          return matchInv || matchNotes || matchContact || matchCategory || matchAmount;
+          return matchInv || matchNotes || matchCategory || matchAmount;
         }
         return true;
       })
@@ -428,7 +427,7 @@ export default function TransactionsView() {
         }
         return 0;
       });
-  }, [transactions, selectedPeriod, filterType, filterPayment, search, sortBy, contactMap, currentMonth, currentYear]);
+  }, [transactions, selectedPeriod, filterType, search, sortBy, currentMonth, currentYear, now]);
 
   // Anti-Lag Pagination: 20 items initial, reset on any filter/search change
   const {
@@ -438,7 +437,7 @@ export default function TransactionsView() {
   } = usePagination(filteredTransactions, {
     initialLimit: 20,
     step: 20,
-    resetDependencies: [selectedPeriod, filterType, filterPayment, sortBy, search],
+    resetDependencies: [selectedPeriod, filterType, sortBy, search],
   });
 
   const isLoading = transactions === undefined;
@@ -531,9 +530,21 @@ export default function TransactionsView() {
       </div>
 
       {/* =========================================================================
-          VIEW MODE SWITCHER (Apple HIG): Proyek Rotasi Modal vs Transaksi Kasir
+          VIEW MODE SWITCHER: Transaksi Kasir (Kiri) vs Proyek Rotasi Modal (Kanan)
          ========================================================================= */}
       <div className="flex p-1 bg-slate-200/80 rounded-2xl border border-slate-300/60 max-w-md w-full">
+        <button
+          type="button"
+          onClick={() => setMainTab('transactions')}
+          className={`flex-1 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+            mainTab === 'transactions'
+              ? 'bg-[#071A24] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Receipt className="w-3.5 h-3.5 text-[#00D29E]" />
+          <span>Transaksi Kasir / Dagang</span>
+        </button>
         <button
           type="button"
           onClick={() => setMainTab('rotations')}
@@ -546,23 +557,9 @@ export default function TransactionsView() {
           <Layers className="w-3.5 h-3.5 text-[#00D29E]" />
           <span>Proyek Rotasi Modal</span>
         </button>
-        <button
-          type="button"
-          onClick={() => setMainTab('transactions')}
-          className={`flex-1 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
-            mainTab === 'transactions'
-              ? 'bg-white text-[#071A24] shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Receipt className="w-3.5 h-3.5" />
-          <span>Transaksi Kasir / Dagang</span>
-        </button>
       </div>
 
-      {mainTab === 'rotations' ? (
-        <CapitalRotationsView />
-      ) : (
+      {mainTab === 'transactions' ? (
         <>
       {/* =========================================================================
           2. BANKING CASH FLOW SUMMARY BAR (Ringkas & Langsung Paham)
@@ -627,27 +624,7 @@ export default function TransactionsView() {
           </div>
         </div>
 
-        {/* Pending Tempo Banner */}
-        {metrics.unpaidCount > 0 && (
-          <div
-            onClick={() => setFilterType(filterType === 'credit' ? 'all' : 'credit')}
-            className={`p-2.5 rounded-2xl flex items-center justify-between text-xs transition cursor-pointer ${
-              filterType === 'credit'
-                ? 'bg-amber-100 text-amber-900 font-bold border border-amber-300'
-                : 'bg-amber-50/80 hover:bg-amber-100/80 text-amber-800 border border-amber-200/60'
-            }`}
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <Clock className="w-4 h-4 text-amber-600 shrink-0" />
-              <span className="truncate">
-                <strong>{metrics.unpaidCount} Tagihan Tempo:</strong> {formatCurrency(metrics.unpaidTotal)} belum lunas
-              </span>
-            </div>
-            <span className="text-[11px] font-bold text-amber-700 underline shrink-0 ml-2">
-              {filterType === 'credit' ? 'Reset' : 'Filter Tempo'}
-            </span>
-          </div>
-        )}
+
       </div>
 
       {/* =========================================================================
@@ -677,6 +654,8 @@ export default function TransactionsView() {
             )}
           </div>
 
+
+
           <button
             type="button"
             onClick={() => setShowFilterModal(true)}
@@ -703,8 +682,6 @@ export default function TransactionsView() {
             { id: 'all', label: 'Semua', count: transactions?.length || 0 },
             { id: 'income', label: 'Uang Masuk', dot: 'bg-[#00D29E]' },
             { id: 'expense', label: 'Uang Keluar', dot: 'bg-rose-500' },
-            { id: 'transfer', label: 'Transfer', dot: 'bg-blue-500' },
-            { id: 'credit', label: 'Tempo', dot: 'bg-amber-500', count: metrics.unpaidCount },
           ].map((tab) => {
             const isActive = filterType === tab.id;
             return (
@@ -752,23 +729,7 @@ export default function TransactionsView() {
             </span>
           )}
 
-          {filterPayment !== 'all' && (
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 min-h-[34px] rounded-2xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold shrink-0">
-              <span>
-                {filterPayment === 'paid' && 'Status: Lunas'}
-                {filterPayment === 'partial' && 'Status: DP'}
-                {filterPayment === 'credit' && 'Status: Tempo'}
-              </span>
-              <button
-                type="button"
-                onClick={() => setFilterPayment('all')}
-                className="hover:bg-emerald-200/60 p-0.5 rounded-full cursor-pointer ml-0.5"
-                title="Hapus filter status"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </span>
-          )}
+
 
           {sortBy !== 'newest' && (
             <span className="inline-flex items-center gap-1 px-2.5 py-1 min-h-[34px] rounded-2xl bg-blue-50 text-blue-800 border border-blue-200 text-xs font-semibold shrink-0">
@@ -815,7 +776,7 @@ export default function TransactionsView() {
           icon={Receipt}
           title="Tidak Ada Transaksi Ditemukan"
           description={
-            search || filterType !== 'all' || filterPayment !== 'all' || selectedPeriod !== 'all'
+            search || filterType !== 'all' || selectedPeriod !== 'all'
               ? 'Tidak ada transaksi yang cocok dengan kriteria filter Anda.'
               : 'Belum ada transaksi yang tercatat dalam sistem.'
           }
@@ -838,11 +799,10 @@ export default function TransactionsView() {
                 {/* Group Card with Hairline Dividers */}
                 <div className="bg-white rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.02)] divide-y divide-slate-100 overflow-hidden">
                   {group.items.map((tx) => {
-                    const contactName = contactMap.get(String(tx.contact_id));
                     const isVoid = tx.status === 'void';
                     const isIncome = tx.type === 'income';
                     const isTransfer = tx.type === 'transfer';
-                    const remaining = (Number(tx.total_amount) || 0) - (Number(tx.paid_amount) || 0);
+                    const itemTitle = tx.invoice_number || tx.category || 'Transaksi Kas';
 
                     // Badge styling
                     let statusBadge = null;
@@ -850,18 +810,6 @@ export default function TransactionsView() {
                       statusBadge = (
                         <span className="px-2 py-0.2 rounded-md text-[10px] font-bold bg-slate-100 text-slate-500">
                           Batal
-                        </span>
-                      );
-                    } else if (tx.payment_status === 'partial') {
-                      statusBadge = (
-                        <span className="px-2 py-0.2 rounded-md text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200/60">
-                          DP
-                        </span>
-                      );
-                    } else if (tx.payment_status === 'credit') {
-                      statusBadge = (
-                        <span className="px-2 py-0.2 rounded-md text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200/60">
-                          Tempo
                         </span>
                       );
                     }
@@ -897,7 +845,7 @@ export default function TransactionsView() {
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="font-extrabold text-sm text-[#071A24] truncate">
-                                {contactName || tx.invoice_number || 'Transaksi Umum'}
+                                {itemTitle}
                               </span>
                               {statusBadge}
                             </div>
@@ -935,11 +883,7 @@ export default function TransactionsView() {
                               {isIncome ? '+' : isTransfer ? '' : '-'}{formatCurrency(tx.total_amount)}
                             </div>
 
-                            {tx.payment_status !== 'paid' && !isVoid && (
-                              <div className="text-[10px] font-bold text-amber-600 tabular-nums">
-                                Sisa: {formatCurrency(remaining)}
-                              </div>
-                            )}
+
                           </div>
 
                           <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
@@ -960,6 +904,8 @@ export default function TransactionsView() {
         </div>
       )}
       </>
+      ) : (
+        <CapitalRotationsView />
       )}
 
       {/* =========================================================================
@@ -979,16 +925,15 @@ export default function TransactionsView() {
         size="xl"
       >
         <form onSubmit={handleSaveTransaction} className="space-y-4">
-          {/* Tipe Transaksi (Pemasukan / Pengeluaran / Transfer) */}
+          {/* Tipe Transaksi (Pemasukan / Pengeluaran) */}
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
               Jenis Transaksi
             </label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {[
                 { id: 'income', label: 'Pemasukan (+)', icon: ArrowDownLeft, color: 'text-[#00D29E]' },
                 { id: 'expense', label: 'Pengeluaran (-)', icon: ArrowUpRight, color: 'text-rose-500' },
-                { id: 'transfer', label: 'Transfer Kas (⇄)', icon: ArrowLeftRight, color: 'text-blue-500' },
               ].map((t) => {
                 const Icon = t.icon;
                 const isActive = txType === t.id;
@@ -998,14 +943,17 @@ export default function TransactionsView() {
                     type="button"
                     onClick={() => {
                       setTxType(t.id);
-                      setSubType(
-                        t.id === 'income' ? 'sale' : t.id === 'expense' ? 'purchase' : 'transfer'
-                      );
+                      if (t.id === 'expense' && entryMode === 'quick') {
+                        setQuickCategory('BBM / Bensin');
+                      } else if (t.id === 'income' && entryMode === 'quick') {
+                        setQuickCategory('Penjualan Tunai');
+                      }
                     }}
-                    className={`p-3 rounded-2xl border text-center transition flex flex-col items-center justify-center gap-1 cursor-pointer ${isActive
+                    className={`p-3 rounded-2xl border text-center transition flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                      isActive
                         ? 'bg-[#071A24] text-white border-[#071A24] shadow-xs'
                         : 'bg-slate-50 text-slate-700 border-slate-200/80 hover:bg-slate-100'
-                      }`}
+                    }`}
                   >
                     <Icon className={`w-4 h-4 ${isActive ? 'text-[#00D29E]' : t.color} stroke-[2.5]`} />
                     <span className="text-xs font-bold">{t.label}</span>
@@ -1015,7 +963,42 @@ export default function TransactionsView() {
             </div>
           </div>
 
-          {/* Inti: Tanggal & Rekening Kas */}
+          {/* Mode Input: Kas Cepat vs Jual/Beli Komoditas Berstok */}
+          <div>
+            <div className="flex p-1 bg-slate-100 rounded-2xl border border-slate-200/80">
+              <button
+                type="button"
+                onClick={() => setEntryMode('quick')}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  entryMode === 'quick'
+                    ? 'bg-white text-[#071A24] shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Zap className="w-3.5 h-3.5 text-amber-500 stroke-[2.5]" />
+                <span>Kas Cepat (Beban / Tunai)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setEntryMode('stock')}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  entryMode === 'stock'
+                    ? 'bg-white text-[#071A24] shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Package className="w-3.5 h-3.5 text-[#00D29E] stroke-[2.5]" />
+                <span>{txType === 'income' ? 'Penjualan Stok' : 'Kulakan / Beli Stok'}</span>
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1.5 px-1">
+              {entryMode === 'quick'
+                ? '⚡ Cocok untuk bensin, makan, listrik, gaji, atau kas keluar/masuk harian tanpa barang stok.'
+                : '📦 Terhubung dengan inventaris gudang & kartu mutasi stok komoditas.'}
+            </p>
+          </div>
+
+          {/* Inti: Tanggal & Rekening Kas Utama */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold text-[#071A24] mb-1">
@@ -1032,53 +1015,142 @@ export default function TransactionsView() {
 
             <div>
               <label className="block text-xs font-bold text-[#071A24] mb-1">
-                {txType === 'transfer' ? 'Dari Rekening Kas' : 'Rekening Kas / Bank'}
+                Akun Kas Usaha
               </label>
-              <select
-                value={accountId}
-                onChange={(e) => setAccountId(e.target.value)}
-                className="input-field font-semibold rounded-2xl border-slate-200/80"
-                required
-              >
-                <option value="">Pilih Akun Kas</option>
-                {accounts?.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} (Saldo: {formatCurrency(a.balance)})
-                  </option>
-                ))}
-              </select>
+              <div className="min-h-[44px] px-3.5 rounded-2xl bg-slate-100/80 border border-slate-200/80 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Wallet className="w-4 h-4 text-[#00D29E]" />
+                  <span className="text-xs sm:text-sm font-bold text-[#071A24]">
+                    {primaryAccount?.name || 'Kas Utama'}
+                  </span>
+                </div>
+                <span className="text-xs font-black text-emerald-600 tabular-nums">
+                  Saldo: {formatCurrency(primaryAccount?.balance || 0)}
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Transfer Spesifik: Akun Tujuan */}
-          {txType === 'transfer' && (
-            <div>
-              <label className="block text-xs font-bold text-[#071A24] mb-1">
-                Ke Rekening Kas Tujuan
-              </label>
-              <select
-                value={toAccountId}
-                onChange={(e) => setToAccountId(e.target.value)}
-                className="input-field font-semibold rounded-2xl border-slate-200/80"
-                required
-              >
-                <option value="">Pilih Akun Tujuan</option>
-                {accounts?.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} (Saldo: {formatCurrency(a.balance)})
-                  </option>
-                ))}
-              </select>
+          {/* =========================================================================
+              A. MODE 1: KAS CEPAT (NOMINAL LANGSUNG - 3 DETIK SELESAI)
+             ========================================================================= */}
+          {entryMode === 'quick' && (
+            <div className="space-y-3.5 pt-2 border-t border-slate-100 animate-in fade-in duration-150">
+              {/* Input Nominal Angka Besar */}
+              <div>
+                <label className="block text-xs font-bold text-[#071A24] mb-1">
+                  Nominal {txType === 'income' ? 'Pemasukan' : 'Pengeluaran'} (Rp)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">
+                    Rp
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    autoFocus
+                    min="1"
+                    value={quickAmount}
+                    onChange={(e) => setQuickAmount(e.target.value)}
+                    placeholder="0"
+                    className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xl sm:text-2xl font-black text-[#071A24] tabular-nums focus:bg-white focus:border-[#00D29E] focus:ring-2 focus:ring-[#00D29E]/20 transition"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Kategori Cepat (Pill Chips) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  Pilih Kategori {txType === 'income' ? 'Pemasukan' : 'Pengeluaran'}
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {(txType === 'expense'
+                    ? [
+                        'BBM / Bensin',
+                        'Konsumsi / Makan',
+                        'Operasional',
+                        'Gaji & Upah',
+                        'Listrik & Air',
+                        'Servis & Servis',
+                        'Lainnya',
+                      ]
+                    : [
+                        'Penjualan Tunai',
+                        'Pendapatan Jasa',
+                        'Suntikan Modal',
+                        'Pelunasan Piutang',
+                        'Lainnya',
+                      ]
+                  ).map((cat) => {
+                    const isSelected = quickCategory === cat;
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setQuickCategory(cat)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                          isSelected
+                            ? 'bg-[#071A24] text-white border-[#071A24] shadow-2xs'
+                            : 'bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {quickCategory === 'Lainnya' && (
+                  <div className="mt-2 animate-in fade-in duration-150">
+                    <input
+                      type="text"
+                      value={customCategory}
+                      onChange={(e) => setCustomCategory(e.target.value)}
+                      placeholder="Tuliskan nama kategori baru..."
+                      className="input-field bg-white rounded-xl text-xs"
+                      required
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Keterangan Singkat */}
+              <div>
+                <label className="block text-xs font-bold text-[#071A24] mb-1">
+                  Keterangan / Keperluan (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={quickNotes}
+                  onChange={(e) => setQuickNotes(e.target.value)}
+                  placeholder={
+                    txType === 'income'
+                      ? 'Contoh: Pembayaran tunai pelanggan Toko Bu Siti'
+                      : 'Contoh: Beli bensin motor pickup pengantaran barang'
+                  }
+                  className="input-field bg-white rounded-xl text-xs"
+                />
+              </div>
             </div>
           )}
 
-          {/* Rincian Komoditas (Line Items) */}
-          {txType !== 'transfer' && (
-            <div className="space-y-3 pt-2 border-t border-slate-100">
+          {/* =========================================================================
+              B. MODE 2: JUAL / BELI STOK KOMODITAS (DENGAN VALIDASI STOK KETAT)
+             ========================================================================= */}
+          {entryMode === 'stock' && (
+            <div className="space-y-3 pt-2 border-t border-slate-100 animate-in fade-in duration-150">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                  Rincian Komoditas
-                </span>
+                <div>
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+                    {txType === 'income' ? 'Daftar Barang yang Dijual' : 'Daftar Barang yang Dibeli (Kulakan)'}
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    {txType === 'income'
+                      ? 'Barang akan memotong stok gudang otomatis.'
+                      : 'Barang akan menambah stok & menghitung HPP otomatis.'}
+                  </span>
+                </div>
                 <button
                   type="button"
                   onClick={addLineItem}
@@ -1089,92 +1161,157 @@ export default function TransactionsView() {
                 </button>
               </div>
 
-              {lineItems.map((it, idx) => (
-                <div
-                  key={idx}
-                  className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-2.5"
-                >
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
-                    {/* Pilih Produk */}
-                    <div className="sm:col-span-5">
-                      <label className="block text-xs font-semibold text-slate-500 mb-1 sm:hidden">
-                        Pilih Komoditas
-                      </label>
-                      <select
-                        value={it.product_id}
-                        onChange={(e) => handleItemChange(idx, 'product_id', e.target.value)}
-                        className="input-field bg-white rounded-xl text-xs sm:text-sm font-semibold"
-                        required
-                      >
-                        <option value="">Pilih Komoditas / Barang</option>
-                        {items?.map((prod) => (
-                          <option key={prod.id} value={prod.id}>
-                            {prod.name} (Stok: {prod.stock} {prod.base_unit})
-                          </option>
-                        ))}
-                      </select>
+              {/* Alert Peringatan Jika Stok Kosong / Kurang Saat Penjualan */}
+              {txType === 'income' && hasStockError && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-900 space-y-2 animate-in fade-in duration-200">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="text-xs space-y-1">
+                      <strong className="font-black text-rose-800 block text-xs sm:text-sm">
+                        PERINGATAN: Stok Tidak Cukup / Kosong!
+                      </strong>
+                      {stockValidationErrors.map((err, i) => (
+                        <p key={i} className="text-rose-700 font-medium">
+                          • {err.message}
+                        </p>
+                      ))}
                     </div>
+                  </div>
 
-                    {/* Qty & Satuan */}
-                    <div className="sm:col-span-3">
-                      <label className="block text-xs font-semibold text-slate-500 mb-1 sm:hidden">
-                        Kuantitas ({it.unit || 'unit'})
-                      </label>
-                      <div className="flex items-center gap-1.5">
+                  {/* Tombol Solusi Pintas: Langsung alihkan ke Beli Stok Masuk */}
+                  <div className="pt-2 border-t border-rose-200 flex flex-wrap gap-2 items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTxType('expense');
+                        setEntryMode('stock');
+                      }}
+                      className="text-xs font-bold px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white shadow-2xs transition cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Alihkan ke Pembelian Stok Masuk Sekarang</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {lineItems.map((it, idx) => {
+                const prod = items?.find((p) => String(p.id) === String(it.product_id));
+                const isOutOfStock = prod && Number(prod.stock) <= 0;
+                const isInsufficient = prod && Number(it.qty) > Number(prod.stock);
+
+                return (
+                  <div
+                    key={idx}
+                    className={`p-3.5 rounded-2xl space-y-2.5 border transition ${
+                      txType === 'income' && isOutOfStock
+                        ? 'bg-rose-50/70 border-rose-300'
+                        : txType === 'income' && isInsufficient
+                        ? 'bg-amber-50/70 border-amber-300'
+                        : 'bg-slate-50 border-slate-200/80'
+                    }`}
+                  >
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
+                      {/* Pilih Produk */}
+                      <div className="sm:col-span-5">
+                        <label className="block text-xs font-semibold text-slate-500 mb-1 sm:hidden">
+                          Pilih Komoditas
+                        </label>
+                        <select
+                          value={it.product_id}
+                          onChange={(e) => handleItemChange(idx, 'product_id', e.target.value)}
+                          className={`input-field bg-white rounded-xl text-xs sm:text-sm font-semibold ${
+                            txType === 'income' && isOutOfStock ? 'border-rose-400 text-rose-900' : ''
+                          }`}
+                          required
+                        >
+                          <option value="">Pilih Komoditas / Barang</option>
+                          {items?.map((p) => {
+                            const curStk = Number(p.stock) || 0;
+                            return (
+                              <option key={p.id} value={p.id}>
+                                {p.name} {curStk <= 0 ? `[STOK KOSONG: 0 ${p.base_unit}]` : `(Stok: ${curStk} ${p.base_unit})`}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+
+                      {/* Qty & Satuan */}
+                      <div className="sm:col-span-3">
+                        <label className="block text-xs font-semibold text-slate-500 mb-1 sm:hidden">
+                          Kuantitas ({it.unit || 'unit'})
+                        </label>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            min="0.01"
+                            step="any"
+                            value={it.qty}
+                            onChange={(e) => handleItemChange(idx, 'qty', e.target.value)}
+                            placeholder="Qty"
+                            className="input-field bg-white tabular-nums rounded-xl text-xs sm:text-sm"
+                            required
+                          />
+                          <span className="text-xs font-bold text-slate-600 shrink-0 px-1">
+                            {it.unit || 'unit'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Harga Satuan */}
+                      <div className="sm:col-span-3">
+                        <label className="block text-xs font-semibold text-slate-500 mb-1 sm:hidden">
+                          {txType === 'income' ? 'Harga Jual (Rp)' : 'Harga Beli (Rp)'}
+                        </label>
                         <input
                           type="number"
-                          inputMode="decimal"
-                          min="0.1"
-                          step="any"
-                          value={it.qty}
-                          onChange={(e) => handleItemChange(idx, 'qty', e.target.value)}
-                          placeholder="Qty"
+                          inputMode="numeric"
+                          min="0"
+                          value={it.unit_price}
+                          onChange={(e) => handleItemChange(idx, 'unit_price', e.target.value)}
+                          placeholder="Harga Rp"
                           className="input-field bg-white tabular-nums rounded-xl text-xs sm:text-sm"
                           required
                         />
-                        <span className="text-xs font-bold text-slate-600 shrink-0 px-1">
-                          {it.unit || 'unit'}
-                        </span>
+                      </div>
+
+                      {/* Hapus Baris */}
+                      <div className="sm:col-span-1 flex justify-end">
+                        {lineItems.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeLineItem(idx)}
+                            className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center text-rose-500 hover:bg-rose-50 rounded-xl transition cursor-pointer"
+                            title="Hapus Baris"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </div>
 
-                    {/* Harga Satuan */}
-                    <div className="sm:col-span-3">
-                      <label className="block text-xs font-semibold text-slate-500 mb-1 sm:hidden">
-                        Harga Satuan (Rp)
-                      </label>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min="0"
-                        value={it.unit_price}
-                        onChange={(e) => handleItemChange(idx, 'unit_price', e.target.value)}
-                        placeholder="Harga Rp"
-                        className="input-field bg-white tabular-nums rounded-xl text-xs sm:text-sm"
-                        required
-                      />
-                    </div>
-
-                    {/* Hapus Baris */}
-                    <div className="sm:col-span-1 flex justify-end">
-                      {lineItems.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removeLineItem(idx)}
-                          className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center text-rose-500 hover:bg-rose-50 rounded-xl transition cursor-pointer"
-                          title="Hapus Baris"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                    <div className="flex items-center justify-between text-xs text-slate-500 font-medium pt-1 border-t border-slate-200/50">
+                      {prod ? (
+                        <span className={`text-[11px] font-semibold ${isOutOfStock ? 'text-rose-600 font-bold' : 'text-slate-500'}`}>
+                          Stok Saat Ini: <strong className="text-[#071A24]">{prod.stock} {prod.base_unit}</strong>
+                          {txType === 'income' && !isOutOfStock && (
+                            <span className="ml-1 text-slate-400">
+                              (Sisa setelah jual: {Math.max(0, Number(prod.stock) - Number(it.qty))} {prod.base_unit})
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-slate-400">Pilih barang untuk melihat stok</span>
                       )}
+                      <div>
+                        Subtotal: <strong className="text-[#071A24] font-black tabular-nums">{formatCurrency(it.subtotal)}</strong>
+                      </div>
                     </div>
                   </div>
-
-                  <div className="text-right text-xs text-slate-500 font-medium pt-1 border-t border-slate-200/50">
-                    Subtotal: <strong className="text-[#071A24] font-black tabular-nums">{formatCurrency(it.subtotal)}</strong>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -1189,230 +1326,57 @@ export default function TransactionsView() {
             </span>
           </div>
 
-          {/* Opsi Lanjutan (Progressive Disclosure) */}
-          {txType !== 'transfer' && (
-            <div className="space-y-3 pt-2 border-t border-slate-100">
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
-                Opsi Lanjutan
+          {/* Lampiran Foto Nota (Sederhana Tanpa Toggle Bertingkat) */}
+          <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#071A24] flex items-center gap-1.5">
+                <Camera className="w-3.5 h-3.5 text-[#00D29E]" />
+                <span>Foto Bukti Nota (Opsional)</span>
               </span>
-
-              {/* Toggle 1: Tempo & Rekanan */}
-              <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <CreditCard className="w-4 h-4 text-[#00D29E]" />
-                    <div>
-                      <div className="text-xs font-bold text-[#071A24]">
-                        Tempo / Cicilan / Kontak Rekanan
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        Pilih pelanggan/supplier, jatuh tempo, atau pembayaran bertahap (DP)
-                      </div>
-                    </div>
-                  </div>
-                  <label className="ios-switch">
-                    <input
-                      type="checkbox"
-                      checked={enableCreditOption}
-                      onChange={(e) => setEnableCreditOption(e.target.checked)}
-                    />
-                    <span className="ios-slider" />
-                  </label>
-                </div>
-
-                {enableCreditOption && (
-                  <div className="space-y-3 pt-3 border-t border-slate-200/60 animate-in fade-in duration-200">
-                    <div>
-                      <label className="block text-xs font-bold text-[#071A24] mb-1">
-                        {txType === 'income' ? 'Pelanggan (Customer)' : 'Supplier / Pemasok'}
-                      </label>
-                      <select
-                        value={contactId}
-                        onChange={(e) => setContactId(e.target.value)}
-                        className="input-field bg-white rounded-xl"
-                      >
-                        <option value="">Pilih Kontak Rekanan</option>
-                        {contacts?.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name} ({c.type})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-[#071A24] mb-1">
-                        Status Pembayaran
-                      </label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {[
-                          { id: 'paid', label: 'Lunas Sekarang' },
-                          { id: 'partial', label: 'Bayar DP' },
-                          { id: 'credit', label: 'Tempo Penuh' },
-                        ].map((opt) => (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            onClick={() => setPaymentOption(opt.id)}
-                            className={`py-2 rounded-xl text-xs font-bold transition cursor-pointer border ${paymentOption === opt.id
-                                ? 'bg-[#071A24] text-white border-[#071A24]'
-                                : 'bg-white text-slate-700 border-slate-200'
-                              }`}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {paymentOption === 'partial' && (
-                      <div>
-                        <label className="block text-xs font-bold text-[#071A24] mb-1">
-                          Nominal DP yang Dibayar Sekarang (Rp)
-                        </label>
-                        <input
-                          type="number"
-                          inputMode="numeric"
-                          min="0"
-                          value={dpAmount}
-                          onChange={(e) => setDpAmount(e.target.value)}
-                          placeholder="Contoh: 500000"
-                          className="input-field bg-white tabular-nums rounded-xl"
-                          required={paymentOption === 'partial'}
-                        />
-                      </div>
-                    )}
-
-                    {paymentOption !== 'paid' && (
-                      <div>
-                        <label className="block text-xs font-bold text-[#071A24] mb-1">
-                          Tanggal Jatuh Tempo Pelunasan
-                        </label>
-                        <input
-                          type="date"
-                          value={dueDate}
-                          onChange={(e) => setDueDate(e.target.value)}
-                          className="input-field bg-white tabular-nums rounded-xl"
-                          required={paymentOption !== 'paid'}
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Toggle 2: Foto Bukti Nota */}
-              <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <Camera className="w-4 h-4 text-[#00D29E]" />
-                    <div>
-                      <div className="text-xs font-bold text-[#071A24]">
-                        Lampirkan Foto Bukti Nota
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        Otomatis terkompresi & tersimpan aman di Cloud Storage
-                      </div>
-                    </div>
-                  </div>
-                  <label className="ios-switch">
-                    <input
-                      type="checkbox"
-                      checked={enableReceiptUpload}
-                      onChange={(e) => setEnableReceiptUpload(e.target.checked)}
-                    />
-                    <span className="ios-slider" />
-                  </label>
-                </div>
-
-                {enableReceiptUpload && (
-                  <div className="pt-3 border-t border-slate-200/60 animate-in fade-in duration-200">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      ref={fileInputRef}
-                      onChange={handlePhotoSelect}
-                      className="hidden"
-                    />
-
-                    {receiptPreview ? (
-                      <div className="space-y-2">
-                        <div className="relative w-full max-h-48 rounded-xl overflow-hidden border border-slate-200 flex items-center justify-center bg-black/5 p-2">
-                          <img
-                            src={receiptPreview}
-                            alt="Nota Preview"
-                            className="max-h-44 object-contain rounded-lg"
-                          />
-                        </div>
-                        <div className="flex justify-end">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setReceiptFile(null);
-                              setReceiptPreview('');
-                            }}
-                            className="text-xs text-rose-600 font-bold hover:underline py-1 px-2 cursor-pointer"
-                          >
-                            Hapus Foto Nota
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="w-full py-4 border-2 border-dashed border-slate-300 hover:border-[#00D29E] rounded-2xl flex flex-col items-center justify-center text-slate-500 hover:text-[#071A24] transition min-h-[56px] cursor-pointer"
-                      >
-                        <Upload className="w-5 h-5 mb-1 text-[#00D29E]" />
-                        <span className="text-xs font-bold">Ambil Foto Nota atau Pilih dari Galeri</span>
-                        <span className="text-[11px] text-slate-400 mt-0.5">
-                          Kompresi otomatis & upload ke storage
-                        </span>
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Toggle 3: Catatan */}
-              <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <FileText className="w-4 h-4 text-slate-600" />
-                    <div>
-                      <div className="text-xs font-bold text-[#071A24]">
-                        Catatan & Keterangan Tambahan
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        Nomor plat kendaraan, sopir, atau catatan khusus komoditas
-                      </div>
-                    </div>
-                  </div>
-                  <label className="ios-switch">
-                    <input
-                      type="checkbox"
-                      checked={enableNotes}
-                      onChange={(e) => setEnableNotes(e.target.checked)}
-                    />
-                    <span className="ios-slider" />
-                  </label>
-                </div>
-
-                {enableNotes && (
-                  <div className="pt-3 border-t border-slate-200/60 animate-in fade-in duration-200">
-                    <textarea
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder="Tuliskan keterangan pengiriman, sopir, atau kondisi barang..."
-                      rows={2}
-                      className="input-field bg-white rounded-xl"
-                    />
-                  </div>
-                )}
-              </div>
+              {!receiptPreview && (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-xs font-bold text-[#00D29E] hover:underline cursor-pointer"
+                >
+                  + Unggah Foto
+                </button>
+              )}
             </div>
-          )}
+
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              ref={fileInputRef}
+              onChange={handlePhotoSelect}
+              className="hidden"
+            />
+
+            {receiptPreview ? (
+              <div className="space-y-1.5 pt-1">
+                <div className="relative w-full max-h-36 rounded-xl overflow-hidden border border-slate-200 flex items-center justify-center bg-black/5 p-1">
+                  <img
+                    src={receiptPreview}
+                    alt="Nota Preview"
+                    className="max-h-32 object-contain rounded-lg"
+                  />
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReceiptFile(null);
+                      setReceiptPreview('');
+                    }}
+                    className="text-xs text-rose-600 font-bold hover:underline py-1 px-2 cursor-pointer"
+                  >
+                    Hapus Foto
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
 
           {/* Form Actions */}
           <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 pt-4 border-t border-slate-100">
@@ -1425,7 +1389,7 @@ export default function TransactionsView() {
             </button>
             <button
               type="submit"
-              disabled={isUploading || totalAmount <= 0}
+              disabled={isUploading || totalAmount <= 0 || (entryMode === 'stock' && hasStockError)}
               className="w-full sm:w-auto px-6 py-2.5 rounded-2xl bg-[#071A24] hover:bg-[#0B2533] disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-sm transition ios-spring-tap cursor-pointer flex items-center justify-center gap-2"
             >
               <Check className="w-4 h-4 text-[#00D29E] stroke-[3]" />
@@ -1511,111 +1475,51 @@ export default function TransactionsView() {
           <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 pt-2">
             <button
               type="button"
-              onClick={() => setVoidingTx(null)}
+              disabled={isVoiding}
+              onClick={() => {
+                setVoidingTx(null);
+                setVoidReason('');
+              }}
               className="w-full sm:w-auto px-4 py-2 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
             >
               Batal
             </button>
             <button
               type="button"
+              disabled={isVoiding}
               onClick={async () => {
-                await voidTransaction(voidingTx.id, voidReason || 'Dibatalkan oleh pengguna');
-                setVoidingTx(null);
-                setVoidReason('');
-              }}
-              className="w-full sm:w-auto px-4 py-2 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition"
-            >
-              Konfirmasi Batalkan
-            </button>
-          </div>
-        </div>
-      </BottomSheet>
-
-      {/* =========================================================================
-          MODAL 4: INSTALLMENT PAYMENT
-         ========================================================================= */}
-      <BottomSheet
-        isOpen={Boolean(payingTx)}
-        onClose={() => setPayingTx(null)}
-        title={
-          <div className="flex items-center gap-2 text-[#071A24]">
-            <DollarSign className="w-5 h-5 text-[#00D29E]" />
-            <span className="font-extrabold">Pembayaran Cicilan / Pelunasan</span>
-          </div>
-        }
-        size="sm"
-      >
-        <div className="space-y-4">
-          <div className="p-3.5 bg-slate-50 rounded-2xl text-xs text-slate-600 space-y-1.5 border border-slate-200/80">
-            <div className="flex justify-between">
-              <span>Nomor Faktur:</span>
-              <strong className="text-[#071A24] font-bold font-mono">{payingTx?.invoice_number}</strong>
-            </div>
-            <div className="flex justify-between">
-              <span>Total Tagihan:</span>
-              <strong className="text-[#071A24] font-bold tabular-nums">{formatCurrency(payingTx?.total_amount)}</strong>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-[#071A24] mb-1">
-              Nominal Pembayaran (Rp)
-            </label>
-            <input
-              type="number"
-              inputMode="numeric"
-              value={payAmount}
-              onChange={(e) => setPayAmount(e.target.value)}
-              className="input-field tabular-nums rounded-2xl"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-[#071A24] mb-1">
-              Akun Kas Masuk / Keluar
-            </label>
-            <select
-              value={payAccount}
-              onChange={(e) => setPayAccount(e.target.value)}
-              className="input-field font-semibold rounded-2xl"
-            >
-              <option value="">Pilih Akun Kas</option>
-              {accounts?.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} (Saldo: {formatCurrency(a.balance)})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 pt-2">
-            <button
-              type="button"
-              onClick={() => setPayingTx(null)}
-              className="w-full sm:w-auto px-4 py-2 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
-            >
-              Tutup
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                if (Number(payAmount) > 0) {
-                  await addInstallment(payingTx.id, {
-                    amount: Number(payAmount),
-                    account_id: payAccount || accounts?.[0]?.id,
+                if (isVoiding || !voidingTx) return;
+                setIsVoiding(true);
+                try {
+                  await voidTransaction(voidingTx.id, voidReason || 'Dibatalkan oleh pengguna');
+                  addNotification({
+                    message: `Faktur ${voidingTx.invoice_number || ''} berhasil dibatalkan. Stok dan kas telah disinkronkan kembali.`,
+                    type: 'info',
                   });
-                  setPayingTx(null);
+                  setVoidingTx(null);
+                  setVoidReason('');
+                } catch (err) {
+                  const friendly = translateErrorMessage(err, 'Gagal membatalkan transaksi.');
+                  alert(friendly);
+                } finally {
+                  setIsVoiding(false);
                 }
               }}
-              className="w-full sm:w-auto px-4 py-2 rounded-2xl bg-[#071A24] hover:bg-[#0B2533] text-white font-bold text-xs transition flex items-center justify-center gap-1.5"
+              className="w-full sm:w-auto px-4 py-2 rounded-2xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
             >
-              <Check className="w-3.5 h-3.5 text-[#00D29E]" />
-              <span>Simpan Pembayaran</span>
+              {isVoiding ? (
+                <>
+                  <RotateCcw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Membatalkan...</span>
+                </>
+              ) : (
+                <span>Konfirmasi Batalkan</span>
+              )}
             </button>
           </div>
         </div>
       </BottomSheet>
+
 
       {/* =========================================================================
           MODAL FILTER & URUTKAN TRANSAKSI (Bank-Grade BottomSheet)
@@ -1661,48 +1565,6 @@ export default function TransactionsView() {
                         ? 'bg-[#071A24] text-white border-[#071A24] shadow-xs'
                         : 'bg-slate-50 text-slate-700 border-slate-200/80 hover:bg-slate-100'
                     }`}
-                  >
-                    <span>{opt.label}</span>
-                    {isSelected && <Check className="w-3.5 h-3.5 text-[#00D29E]" />}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* 2. Status Pembayaran */}
-          <div>
-            <div className="flex items-center justify-between mb-2.5">
-              <label className="text-xs font-extrabold text-[#071A24] uppercase tracking-wider">
-                Status Pembayaran
-              </label>
-              {filterPayment !== 'all' && (
-                <button
-                  type="button"
-                  onClick={() => setFilterPayment('all')}
-                  className="text-[11px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
-                >
-                  Reset
-                </button>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { id: 'all', label: 'Semua Status' },
-                { id: 'paid', label: 'Lunas' },
-                { id: 'partial', label: 'DP (Sebagian)' },
-                { id: 'credit', label: 'Tempo / Hutang' },
-              ].map((opt) => {
-                const isSelected = filterPayment === opt.id;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => setFilterPayment(opt.id)}
-                    className={`p-3 rounded-2xl text-xs font-bold text-left transition border cursor-pointer flex items-center justify-between ${isSelected
-                        ? 'bg-[#071A24] text-white border-[#071A24] shadow-xs'
-                        : 'bg-slate-50 text-slate-700 border-slate-200/80 hover:bg-slate-100'
-                      }`}
                   >
                     <span>{opt.label}</span>
                     {isSelected && <Check className="w-3.5 h-3.5 text-[#00D29E]" />}
@@ -1760,7 +1622,6 @@ export default function TransactionsView() {
               type="button"
               onClick={() => {
                 setSelectedPeriod('this_month');
-                setFilterPayment('all');
                 setSortBy('newest');
               }}
               className="flex-1 py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
@@ -1807,10 +1668,7 @@ export default function TransactionsView() {
           const isIncome = tx.type === 'income';
           const isTransfer = tx.type === 'transfer';
           const isVoid = tx.status === 'void';
-          const remaining = (Number(tx.total_amount) || 0) - (Number(tx.paid_amount) || 0);
-          const contactName = contactMap.get(String(tx.contact_id));
-          const accountObj = accounts?.find((a) => a.id === tx.account_id);
-          const toAccountObj = accounts?.find((a) => a.id === tx.to_account_id);
+          const accountObj = accounts?.find((a) => a.id === tx.account_id) || primaryAccount;
 
           return (
             <div className="space-y-4 p-1">
@@ -1836,17 +1694,9 @@ export default function TransactionsView() {
                     <span className="px-3 py-0.5 rounded-full text-xs font-bold bg-slate-200 text-slate-700">
                       Transaksi Dibatalkan (Void)
                     </span>
-                  ) : tx.payment_status === 'paid' ? (
-                    <span className="px-3 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                      Lunas
-                    </span>
-                  ) : tx.payment_status === 'partial' ? (
-                    <span className="px-3 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                      DP (Sisa {formatCurrency(remaining)})
-                    </span>
                   ) : (
-                    <span className="px-3 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-800 border border-rose-200">
-                      Tempo (Belum Lunas)
+                    <span className="px-3 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      Lunas / Tunai Langsung
                     </span>
                   )}
                 </div>
@@ -1886,13 +1736,7 @@ export default function TransactionsView() {
                   </div>
                 </div>
 
-                {/* Rekanan */}
-                <div className="p-3 flex items-center justify-between gap-2">
-                  <span className="text-slate-500 font-semibold">Pihak Terkait (Rekanan)</span>
-                  <span className="font-bold text-[#071A24] text-right truncate">
-                    {contactName || 'Transaksi Umum'}
-                  </span>
-                </div>
+
 
                 {/* Jenis & Kategori */}
                 <div className="p-3 flex items-center justify-between gap-2">
@@ -1912,36 +1756,7 @@ export default function TransactionsView() {
                   </span>
                 </div>
 
-                {/* Rekening Tujuan (khusus transfer) */}
-                {isTransfer && toAccountObj && (
-                  <div className="p-3 flex items-center justify-between gap-2">
-                    <span className="text-slate-500 font-semibold">Ke Rekening Tujuan</span>
-                    <span className="font-bold text-[#00D29E] text-right">
-                      {toAccountObj.name}
-                    </span>
-                  </div>
-                )}
 
-                {/* Sisa Piutang & Jatuh Tempo */}
-                {tx.payment_status !== 'paid' && !isVoid && (
-                  <>
-                    <div className="p-3 flex items-center justify-between gap-2 bg-amber-50/50">
-                      <span className="text-amber-800 font-semibold">Sisa Tagihan Tempo</span>
-                      <span className="font-black text-amber-700 tabular-nums">
-                        {formatCurrency(remaining)}
-                      </span>
-                    </div>
-
-                    {tx.due_date && (
-                      <div className="p-3 flex items-center justify-between gap-2 bg-amber-50/50">
-                        <span className="text-amber-800 font-semibold">Tanggal Jatuh Tempo</span>
-                        <span className="font-bold text-amber-800">
-                          {formatDate(tx.due_date, 'full')}
-                        </span>
-                      </div>
-                    )}
-                  </>
-                )}
 
                 {/* Catatan */}
                 {tx.notes && (
@@ -2002,21 +1817,6 @@ export default function TransactionsView() {
 
               {/* Action Buttons in Receipt */}
               <div className="space-y-2 pt-2 border-t border-slate-100">
-                {tx.payment_status !== 'paid' && !isVoid && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPayingTx(tx);
-                      setPayAmount(String(remaining));
-                      setSelectedTxDetail(null);
-                    }}
-                    className="w-full py-3 rounded-2xl bg-[#00D29E] hover:bg-[#10B981] active:scale-95 text-[#071A24] text-xs font-extrabold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-                  >
-                    <DollarSign className="w-4 h-4 stroke-[2.5]" />
-                    <span>Catat Pelunasan / Cicilan</span>
-                  </button>
-                )}
-
                 <div className="flex items-center gap-2">
                   {!isVoid && (
                     <button
@@ -2045,6 +1845,8 @@ export default function TransactionsView() {
           );
         })()}
       </BottomSheet>
+
+
     </div>
   );
 }

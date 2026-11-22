@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from './lib/store.js';
 import { useAuthStore } from './lib/authStore.js';
-import { seedDatabase } from './lib/seed.js';
+import { seedDatabase, syncStandardCatalog } from './lib/seed.js';
 import { setupRealtimeSync } from './lib/supabaseService.js';
 import SplashScreen from './components/layout/SplashScreen.jsx';
 import Header from './components/layout/Header.jsx';
@@ -13,6 +13,9 @@ import StockView from './components/stock/StockView.jsx';
 import ReportsView from './components/reports/ReportsView.jsx';
 import SettingsView from './components/settings/SettingsView.jsx';
 import { Toast } from './components/ui/Toast.jsx';
+import ErrorBoundary from './components/ui/ErrorBoundary.jsx';
+import OfflineBanner from './components/ui/OfflineBanner.jsx';
+import AuthModal from './components/auth/AuthModal.jsx';
 
 /**
  * Main Application Shell (CV Amanah Barokah Mobile & iPad System)
@@ -24,7 +27,7 @@ import { Toast } from './components/ui/Toast.jsx';
  */
 export default function App() {
   const { activeTab } = useAppStore();
-  const { initializeAuth } = useAuthStore();
+  const { initializeAuth, isAuthModalOpen, setAuthModalOpen } = useAuthStore();
   const [isSplashDone, setIsSplashDone] = useState(false);
   const hasSeededRef = useRef(false);
 
@@ -32,10 +35,12 @@ export default function App() {
     // 1. Initialize Supabase Auth in background
     initializeAuth();
 
-    // 2. Ensure initial seed data exists locally (guarded against React StrictMode double invocation)
+    // 2. Ensure initial seed data exists locally & standard catalog is synchronized
     if (!hasSeededRef.current) {
       hasSeededRef.current = true;
-      seedDatabase().catch((e) => console.warn('Seed database warning:', e));
+      seedDatabase()
+        .then(() => syncStandardCatalog())
+        .catch((e) => console.warn('Seed database warning:', e));
     }
 
     // 3. Setup Supabase Realtime synchronization across iPad and HP
@@ -54,28 +59,36 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F2F2F7] text-[#0F172A] selection:bg-[#00D29E]/20 selection:text-[#071A24] animate-in fade-in duration-300">
-      {/* Translucent Glass Header (Apple HIG / FlowMint) */}
-      <Header />
+    <ErrorBoundary>
+      <div className="min-h-screen flex flex-col bg-[#F2F2F7] text-[#0F172A] selection:bg-[#00D29E]/20 selection:text-[#071A24] animate-in fade-in duration-300">
+        {/* Offline Connection Status Banner */}
+        <OfflineBanner />
 
-      {/* Main Layout: iPadOS Sidebar + Content Area */}
-      <div className="flex-1 flex max-w-7xl w-full mx-auto">
-        <Sidebar />
+        {/* Translucent Glass Header (Apple HIG / FlowMint) */}
+        <Header />
 
-        <main className="flex-1 px-4 py-5 md:p-6 lg:p-8 min-w-0 pb-28 md:pb-12">
-          {activeTab === 'dashboard' && <DashboardView />}
-          {activeTab === 'transactions' && <TransactionsView />}
-          {activeTab === 'stock' && <StockView />}
-          {activeTab === 'reports' && <ReportsView />}
-          {activeTab === 'settings' && <SettingsView />}
-        </main>
+        {/* Main Layout: iPadOS Sidebar + Content Area */}
+        <div className="flex-1 flex max-w-7xl w-full mx-auto">
+          <Sidebar />
+
+          <main className="flex-1 px-4 py-5 md:p-6 lg:p-8 min-w-0 pb-28 md:pb-12">
+            {activeTab === 'dashboard' && <DashboardView />}
+            {activeTab === 'transactions' && <TransactionsView />}
+            {activeTab === 'stock' && <StockView />}
+            {activeTab === 'reports' && <ReportsView />}
+            {activeTab === 'settings' && <SettingsView />}
+          </main>
+        </div>
+
+        {/* Translucent Bottom Navigation for Mobile (iOS HIG) */}
+        <BottomNav />
+
+        {/* Dynamic Alert Toast */}
+        <Toast />
+
+        {/* Bank-Grade Auth & Session Modal */}
+        <AuthModal isOpen={isAuthModalOpen} onClose={() => setAuthModalOpen(false)} />
       </div>
-
-      {/* Translucent Bottom Navigation for Mobile (iOS HIG) */}
-      <BottomNav />
-
-      {/* Dynamic Alert Toast */}
-      <Toast />
-    </div>
+    </ErrorBoundary>
   );
 }

@@ -1,9 +1,10 @@
 export const COMMODITIES = [
   { id: 'com-01', name: 'Minyak', icon: 'Droplets', color: '#F59E0B' },
   { id: 'com-02', name: 'Telur', icon: 'Egg', color: '#EAB308' },
-  { id: 'com-03', name: 'Sapi', icon: 'Beef', color: '#DC2626' },
-  { id: 'com-04', name: 'Domba', icon: 'Bug', color: '#7C3AED' },
-  { id: 'com-05', name: 'Susu', icon: 'Milk', color: '#3B82F6' },
+  { id: 'com-03', name: 'Susu UHT', icon: 'Milk', color: '#3B82F6' },
+  { id: 'com-04', name: 'Sapi', icon: 'Beef', color: '#DC2626' },
+  { id: 'com-05', name: 'Domba', icon: 'Beef', color: '#7C3AED' },
+  { id: 'com-06', name: 'Ikan Nila', icon: 'Fish', color: '#06B6D4' },
 ];
 
 export const EXPENSE_CATEGORIES = [

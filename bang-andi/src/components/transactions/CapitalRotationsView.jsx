@@ -3,15 +3,15 @@ import { useCapitalRotations } from '../../hooks/useCapitalRotations.js';
 import { formatCurrency, formatDate } from '../../lib/formatters.js';
 import { uploadReceiptImage } from '../../lib/storage.js';
 import { usePagination } from '../../hooks/usePagination.js';
+import { useAppStore } from '../../lib/store.js';
+import { translateErrorMessage } from '../../lib/errorHandler.js';
 import { LoadMoreButton } from '../ui/LoadMoreButton.jsx';
-import { BottomSheet } from '../ui/BottomSheet.jsx';
+import BottomSheet from '../ui/BottomSheet.jsx';
 import { EmptyState } from '../ui/EmptyState.jsx';
 import {
   Plus,
   Search,
   Camera,
-  Upload,
-  Image as ImageIcon,
   X,
   Trash2,
   CheckCircle2,
@@ -21,20 +21,18 @@ import {
   TrendingUp,
   Layers,
   Sparkles,
-  ExternalLink,
-  Calendar,
-  AlertTriangle,
-  ArrowUpRight,
-  Filter,
   Eye,
-  FileText
+  ChevronDown,
+  Check,
+  Package
 } from 'lucide-react';
 
 const COMMON_COMMODITIES = [
-  'Susu MBG',
-  'Telur',
   'Minyak Sunco',
   'Minyak Kita',
+  'Telur',
+  'Susu UHT',
+  'Susu MBG',
   'Sapi',
   'Domba',
   'Ikan Nila',
@@ -55,16 +53,21 @@ export default function CapitalRotationsView() {
   // 1. Filter & Search State
   const [filterStatus, setFilterStatus] = useState('all'); // all | waiting | done | cancel
   const [filterCommodity, setFilterCommodity] = useState('all');
+  const [isCommoditySheetOpen, setIsCommoditySheetOpen] = useState(false);
+  const [commoditySheetSearch, setCommoditySheetSearch] = useState('');
   const [search, setSearch] = useState('');
 
   // 2. Modals State
+  const { addNotification } = useAppStore();
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [cairModalItem, setCairModalItem] = useState(null);
-  const [cairDate, setCairDate] = useState(new Date().toISOString().slice(0, 10));
+  const [cairDate, setCairDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [previewProofUrl, setPreviewProofUrl] = useState(null);
   const [cancelModalItem, setCancelModalItem] = useState(null);
   const [cancelReason, setCancelReason] = useState('');
+  const [isConfirmingDone, setIsConfirmingDone] = useState(false);
+  const [isConfirmingCancel, setIsConfirmingCancel] = useState(false);
 
   // 3. Form State
   const [projectName, setProjectName] = useState('');
@@ -111,6 +114,36 @@ export default function CapitalRotationsView() {
     return result;
   }, [rotations, filterStatus, filterCommodity, search]);
 
+  // Dynamic Commodities list from COMMON_COMMODITIES and existing rotations
+  const rotationCommodities = useMemo(() => {
+    const set = new Set(COMMON_COMMODITIES);
+    (rotations || []).forEach((r) => {
+      if (r.commodity && r.commodity.trim()) {
+        set.add(r.commodity.trim());
+      }
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [rotations]);
+
+  // Project count per commodity
+  const commodityRotationCounts = useMemo(() => {
+    const counts = {};
+    (rotations || []).forEach((r) => {
+      if (r.commodity) {
+        const c = r.commodity.trim();
+        counts[c] = (counts[c] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [rotations]);
+
+  // Filtered commodities list for BottomSheet search
+  const filteredSheetCommodities = useMemo(() => {
+    if (!commoditySheetSearch.trim()) return rotationCommodities;
+    const q = commoditySheetSearch.toLowerCase().trim();
+    return rotationCommodities.filter((c) => c.toLowerCase().includes(q));
+  }, [rotationCommodities, commoditySheetSearch]);
+
   // Anti-Lag Pagination: 20 per view
   const {
     displayedItems: paginatedRotations,
@@ -124,10 +157,12 @@ export default function CapitalRotationsView() {
 
   // Open Add Modal
   const handleOpenAddModal = () => {
+    const today = new Date();
+    const dateStr = today.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
     setEditingItem(null);
-    setProjectName('');
     setCommodity('Susu MBG');
-    setStartDate(new Date().toISOString().slice(0, 10));
+    setProjectName(`Susu MBG - ${dateStr}`);
+    setStartDate(today.toISOString().slice(0, 10));
     setCapitalAmount('');
     setProfitAmount('');
     setRoiPercentage(8.0);
@@ -162,15 +197,17 @@ export default function CapitalRotationsView() {
     setRoiPercentage(roi);
   };
 
-  // Handle Capital Change -> recalculate ROI if profit exists
+  // Handle Capital Change -> auto calculate 8% margin for user convenience
   const handleCapitalChange = (val) => {
     setCapitalAmount(val);
     const capNum = Number(val) || 0;
-    const profNum = Number(profitAmount) || 0;
-    if (capNum > 0 && profNum > 0) {
-      setRoiPercentage(Number(((profNum / capNum) * 100).toFixed(2)));
-    } else if (capNum === 0) {
-      setRoiPercentage(0);
+    if (capNum > 0) {
+      const { profit, roi } = calculate8PercentMargin(capNum);
+      setProfitAmount(String(profit));
+      setRoiPercentage(roi);
+    } else {
+      setProfitAmount('');
+      setRoiPercentage(8.0);
     }
   };
 
@@ -245,24 +282,38 @@ export default function CapitalRotationsView() {
 
   // Confirm Mark As Done
   const handleConfirmDone = async () => {
-    if (!cairModalItem) return;
+    if (!cairModalItem || isConfirmingDone) return;
+    setIsConfirmingDone(true);
     try {
       await markAsDone(cairModalItem.id, cairDate);
+      addNotification?.({
+        message: `Proyek "${cairModalItem.project_name}" berhasil dicairkan.`,
+        type: 'success',
+      });
       setCairModalItem(null);
     } catch (err) {
-      console.error('Error marking as done:', err);
+      alert(translateErrorMessage(err, 'Gagal mencairkan proyek.'));
+    } finally {
+      setIsConfirmingDone(false);
     }
   };
 
   // Confirm Cancel
   const handleConfirmCancel = async () => {
-    if (!cancelModalItem) return;
+    if (!cancelModalItem || isConfirmingCancel) return;
+    setIsConfirmingCancel(true);
     try {
       await markAsCancel(cancelModalItem.id, cancelReason);
+      addNotification?.({
+        message: `Proyek "${cancelModalItem.project_name}" dibatalkan.`,
+        type: 'info',
+      });
       setCancelModalItem(null);
       setCancelReason('');
     } catch (err) {
-      console.error('Error cancelling rotation:', err);
+      alert(translateErrorMessage(err, 'Gagal membatalkan proyek.'));
+    } finally {
+      setIsConfirmingCancel(false);
     }
   };
 
@@ -363,11 +414,10 @@ export default function CapitalRotationsView() {
                 key={st.id}
                 type="button"
                 onClick={() => setFilterStatus(st.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
-                  filterStatus === st.id
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${filterStatus === st.id
                     ? 'bg-[#071A24] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
-                }`}
+                  }`}
               >
                 {st.label}
               </button>
@@ -385,58 +435,73 @@ export default function CapitalRotationsView() {
           </button>
         </div>
 
-        {/* Commodity Filter Chips */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+        {/* Search Bar + Commodity Filter Trigger */}
+        <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Cari nama proyek, komoditas (Susu MBG, Sunco, Telur, dll.)..."
+              className="w-full pl-10 pr-9 py-2 min-h-[42px] bg-slate-50/80 rounded-2xl text-xs sm:text-sm border border-slate-200/80 focus:bg-white focus:outline-none focus:border-[#00D29E] focus:ring-1 focus:ring-[#00D29E] transition"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full cursor-pointer"
+                title="Hapus pencarian"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Trigger Button: Opens Bottom Sheet for Commodity Selection */}
           <button
             type="button"
-            onClick={() => setFilterCommodity('all')}
-            className={`px-3 py-1 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
-              filterCommodity === 'all'
-                ? 'bg-[#071A24] text-white shadow-xs'
-                : 'bg-slate-100/80 text-slate-600 hover:bg-slate-200/70'
+            onClick={() => {
+              setCommoditySheetSearch('');
+              setIsCommoditySheetOpen(true);
+            }}
+            className={`px-3.5 py-2 min-h-[42px] rounded-2xl text-xs font-bold transition flex items-center justify-between gap-2.5 cursor-pointer shrink-0 border ${
+              filterCommodity !== 'all'
+                ? 'bg-[#071A24] text-white border-[#071A24] shadow-xs'
+                : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200/80'
             }`}
           >
-            Semua Komoditas
+            <div className="flex items-center gap-2 truncate max-w-[190px] sm:max-w-[220px]">
+              <Package className={`w-4 h-4 shrink-0 ${filterCommodity !== 'all' ? 'text-[#00D29E]' : 'text-slate-400'}`} />
+              <span className="truncate">
+                {filterCommodity === 'all' ? 'Semua Komoditas' : filterCommodity}
+              </span>
+              {filterCommodity !== 'all' && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-[#00D29E]/20 text-[#00D29E] font-bold">
+                  {commodityRotationCounts[filterCommodity] || 0}
+                </span>
+              )}
+            </div>
+            <ChevronDown className={`w-3.5 h-3.5 transition shrink-0 ${filterCommodity !== 'all' ? 'text-slate-300' : 'text-slate-400'}`} />
           </button>
-          {COMMON_COMMODITIES.map((cName) => {
-            const isSel = filterCommodity === cName;
-            return (
-              <button
-                key={cName}
-                type="button"
-                onClick={() => setFilterCommodity(isSel ? 'all' : cName)}
-                className={`px-3 py-1 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
-                  isSel
-                    ? 'bg-[#00D29E] text-[#071A24] shadow-xs'
-                    : 'bg-slate-100/80 text-slate-600 hover:bg-slate-200/70'
-                }`}
-              >
-                {cName}
-              </button>
-            );
-          })}
         </div>
 
-        {/* Search Bar */}
-        <div className="relative">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari nama proyek, komoditas (Susu MBG, Sunco, Telur, dll.)..."
-            className="w-full pl-10 pr-4 py-2 bg-slate-50/80 rounded-2xl text-xs sm:text-sm border border-slate-200/80 focus:bg-white focus:outline-hidden focus:border-[#00D29E] focus:ring-1 focus:ring-[#00D29E] transition"
-          />
-          {search && (
-            <button
-              type="button"
-              onClick={() => setSearch('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
+        {/* Active Commodity Indicator Pill (if filtered) */}
+        {filterCommodity !== 'all' && (
+          <div className="flex items-center gap-1.5 pt-0.5">
+            <div className="inline-flex items-center gap-1.5 text-xs text-slate-600 bg-slate-100/90 px-3 py-1 rounded-xl">
+              <span>Filter Komoditas: <strong className="text-slate-900">{filterCommodity}</strong></span>
+              <button
+                type="button"
+                onClick={() => setFilterCommodity('all')}
+                className="p-0.5 hover:bg-slate-200 rounded-md text-slate-400 hover:text-slate-600 cursor-pointer"
+                title="Hapus filter komoditas"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* =========================================================================
@@ -464,25 +529,23 @@ export default function CapitalRotationsView() {
             return (
               <div
                 key={item.id}
-                className={`bg-white rounded-3xl p-4 sm:p-5 border transition-all ${
-                  isWaiting
+                className={`bg-white rounded-3xl p-4 sm:p-5 border transition-all ${isWaiting
                     ? 'border-amber-300/80 shadow-xs hover:border-amber-400'
                     : isDone
-                    ? 'border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] hover:border-emerald-200'
-                    : 'border-slate-200/60 opacity-60 bg-slate-50/60'
-                }`}
+                      ? 'border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.03)] hover:border-emerald-200'
+                      : 'border-slate-200/60 opacity-60 bg-slate-50/60'
+                  }`}
               >
                 {/* Header row: Project Title, Badge, and Action dropdown/buttons */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
                   <div className="flex items-start gap-3 min-w-0">
                     <div
-                      className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
-                        isWaiting
+                      className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${isWaiting
                           ? 'bg-amber-100 text-amber-700'
                           : isDone
-                          ? 'bg-emerald-100 text-emerald-700'
-                          : 'bg-slate-200 text-slate-600'
-                      }`}
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-slate-200 text-slate-600'
+                        }`}
                     >
                       {isWaiting ? (
                         <Clock className="w-5 h-5 stroke-[2.5]" />
@@ -500,13 +563,12 @@ export default function CapitalRotationsView() {
                         </h3>
                         {/* Status Badge */}
                         <span
-                          className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
-                            isWaiting
+                          className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${isWaiting
                               ? 'bg-amber-100 text-amber-800 border border-amber-300'
                               : isDone
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                              : 'bg-slate-100 text-slate-700 border border-slate-300'
-                          }`}
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                : 'bg-slate-100 text-slate-700 border border-slate-300'
+                            }`}
                         >
                           {isWaiting && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
                           {isWaiting ? 'Waiting (Berjalan)' : isDone ? 'Done (Cair)' : 'Cancel (Batal)'}
@@ -687,11 +749,10 @@ export default function CapitalRotationsView() {
                       setProjectName(`Pengadaan ${c}`);
                     }
                   }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                    commodity === c
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${commodity === c
                       ? 'bg-[#071A24] text-white shadow-xs'
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
+                    }`}
                 >
                   {c}
                 </button>
@@ -936,17 +997,19 @@ export default function CapitalRotationsView() {
             <div className="flex items-center gap-2 pt-2">
               <button
                 type="button"
+                disabled={isConfirmingDone}
                 onClick={() => setCairModalItem(null)}
-                className="flex-1 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
+                className="flex-1 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
               >
                 Kembali
               </button>
               <button
                 type="button"
+                disabled={isConfirmingDone}
                 onClick={handleConfirmDone}
-                className="flex-1 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs"
+                className="flex-1 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs shadow-xs cursor-pointer"
               >
-                Konfirmasi Cair
+                {isConfirmingDone ? 'Memproses...' : 'Konfirmasi Cair'}
               </button>
             </div>
           </div>
@@ -987,17 +1050,19 @@ export default function CapitalRotationsView() {
             <div className="flex items-center gap-2 pt-1">
               <button
                 type="button"
+                disabled={isConfirmingCancel}
                 onClick={() => setCancelModalItem(null)}
-                className="flex-1 py-2.5 rounded-2xl bg-slate-100 text-slate-700 font-bold text-xs"
+                className="flex-1 py-2.5 rounded-2xl bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer"
               >
                 Kembali
               </button>
               <button
                 type="button"
+                disabled={isConfirmingCancel}
                 onClick={handleConfirmCancel}
-                className="flex-1 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs"
+                className="flex-1 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs cursor-pointer"
               >
-                Ya, Batalkan
+                {isConfirmingCancel ? 'Membatalkan...' : 'Ya, Batalkan'}
               </button>
             </div>
           </div>
@@ -1036,6 +1101,118 @@ export default function CapitalRotationsView() {
           </div>
         </div>
       )}
+
+      {/* =========================================================================
+          BOTTOM SHEET: FILTER KOMODITAS ROTASI (WITH SEARCH BAR)
+         ========================================================================= */}
+      <BottomSheet
+        isOpen={isCommoditySheetOpen}
+        onClose={() => setIsCommoditySheetOpen(false)}
+        title="Pilih Komoditas Proyek"
+        size="md"
+      >
+        <div className="space-y-3 pb-2">
+          {/* Search bar inside bottom sheet */}
+          <div className="relative">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={commoditySheetSearch}
+              onChange={(e) => setCommoditySheetSearch(e.target.value)}
+              placeholder="Cari komoditas proyek..."
+              autoFocus
+              className="w-full pl-10 pr-9 py-2.5 text-xs sm:text-sm bg-slate-50 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-2 focus:ring-[#00D29E] focus:border-[#00D29E] transition font-medium text-slate-800"
+            />
+            {commoditySheetSearch && (
+              <button
+                type="button"
+                onClick={() => setCommoditySheetSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* List of Commodities */}
+          <div className="space-y-1.5 max-h-[55vh] overflow-y-auto pr-0.5">
+            {/* Option: Semua Komoditas */}
+            <button
+              type="button"
+              onClick={() => {
+                setFilterCommodity('all');
+                setIsCommoditySheetOpen(false);
+              }}
+              className={`w-full flex items-center justify-between p-3 rounded-2xl text-left transition cursor-pointer ${
+                filterCommodity === 'all'
+                  ? 'bg-[#071A24] text-white shadow-xs'
+                  : 'bg-slate-50/80 hover:bg-slate-100 text-slate-800'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                  filterCommodity === 'all' ? 'bg-white/10 text-[#00D29E]' : 'bg-white border border-slate-200/60 text-slate-500'
+                }`}>
+                  <Package className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs sm:text-sm font-bold">Semua Komoditas</div>
+                  <div className={`text-[11px] ${filterCommodity === 'all' ? 'text-slate-300' : 'text-slate-400'}`}>
+                    Total {rotations?.length || 0} proyek rotasi modal
+                  </div>
+                </div>
+              </div>
+              {filterCommodity === 'all' && (
+                <Check className="w-4 h-4 text-[#00D29E] stroke-[3]" />
+              )}
+            </button>
+
+            {/* Individual Commodities */}
+            {filteredSheetCommodities.length === 0 ? (
+              <div className="py-8 text-center text-xs text-slate-400 font-medium">
+                Tidak ada komoditas yang cocok dengan pencarian "{commoditySheetSearch}".
+              </div>
+            ) : (
+              filteredSheetCommodities.map((cName) => {
+                const isSelected = filterCommodity === cName;
+                const count = commodityRotationCounts[cName] || 0;
+                return (
+                  <button
+                    key={cName}
+                    type="button"
+                    onClick={() => {
+                      setFilterCommodity(cName);
+                      setIsCommoditySheetOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between p-3 rounded-2xl text-left transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#071A24] text-white shadow-xs'
+                        : 'bg-slate-50/80 hover:bg-slate-100 text-slate-800'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                        isSelected ? 'bg-white/10 text-[#00D29E]' : 'bg-white border border-slate-200/60 text-slate-500'
+                      }`}>
+                        <Package className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs sm:text-sm font-bold">{cName}</div>
+                        <div className={`text-[11px] ${isSelected ? 'text-slate-300' : 'text-slate-400'}`}>
+                          {count} proyek tercatat
+                        </div>
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <Check className="w-4 h-4 text-[#00D29E] stroke-[3]" />
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </BottomSheet>
     </div>
   );
 }
