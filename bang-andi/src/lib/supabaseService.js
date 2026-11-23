@@ -323,6 +323,37 @@ export async function syncFromSupabase() {
       }
     }
 
+    // 9. Capital Rotations (Proyek Rotasi Modal)
+    try {
+      const { data: rotations, error: rotErr } = await supabase
+        .from('capital_rotations')
+        .select('*')
+        .order('start_date', { ascending: false });
+
+      if (!rotErr && Array.isArray(rotations) && db.capital_rotations) {
+        await db.capital_rotations.clear();
+        for (const r of rotations) {
+          await db.capital_rotations.put({
+            id: r.id,
+            project_name: r.project_name,
+            commodity: r.commodity,
+            capital_amount: Number(r.capital_amount) || 0,
+            profit_amount: Number(r.profit_amount) || 0,
+            roi_percentage: Number(r.roi_percentage) || 8,
+            status: r.status || 'waiting',
+            start_date: r.start_date,
+            completion_date: r.completion_date,
+            proof_url: r.proof_url || '',
+            notes: r.notes || '',
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+          });
+        }
+      }
+    } catch {
+      // Table capital_rotations may not exist yet in Supabase
+    }
+
     notifyDatabaseChange();
     broadcastSyncStatus({ syncing: false, lastSync: new Date(), error: null });
     return true;
@@ -1191,6 +1222,11 @@ export async function resetSupabaseDatabase() {
 
   try {
     // 1. Delete in reverse dependency order (child tables first)
+    try {
+      await supabase.from('capital_rotations').delete().not('id', 'is', null);
+    } catch {
+      // Table may not exist yet
+    }
     await supabase.from('stock_movements').delete().not('id', 'is', null);
     await supabase.from('transaction_payments').delete().not('id', 'is', null);
     await supabase.from('transactions').delete().not('id', 'is', null);
@@ -1271,6 +1307,108 @@ export async function updateSupabaseAccount(accountId, updates) {
     return true;
   } catch (err) {
     console.warn('Gagal update akun di Supabase:', err);
+    return false;
+  }
+}
+
+/**
+ * Creates a capital rotation project in Supabase
+ */
+export async function createSupabaseCapitalRotation(rotData) {
+  if (!isSupabaseConfigured || !supabase || !isOnline()) return null;
+
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    const now = new Date().toISOString();
+
+    const payload = {
+      user_id: user?.id || null,
+      project_name: rotData.project_name || 'Proyek Rotasi Baru',
+      commodity: rotData.commodity || 'Komoditas Umum',
+      capital_amount: Math.round(Number(rotData.capital_amount) || 0),
+      profit_amount: Math.round(Number(rotData.profit_amount) || 0),
+      roi_percentage: Number(rotData.roi_percentage) || 8.0,
+      status: rotData.status || 'waiting',
+      start_date: rotData.start_date || now,
+      completion_date: rotData.completion_date || null,
+      proof_url: rotData.proof_url || null,
+      notes: rotData.notes || '',
+      created_at: now,
+      updated_at: now,
+    };
+
+    const { data, error } = await supabase
+      .from('capital_rotations')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.warn('Gagal simpan rotasi modal ke Supabase:', err);
+    return null;
+  }
+}
+
+/**
+ * Updates a capital rotation project in Supabase
+ */
+export async function updateSupabaseCapitalRotation(rotId, updates) {
+  if (!isSupabaseConfigured || !supabase || !isOnline() || !rotId) return false;
+
+  try {
+    const payload = { ...updates, updated_at: new Date().toISOString() };
+    const { error } = await supabase
+      .from('capital_rotations')
+      .update(payload)
+      .eq('id', rotId);
+
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.warn('Gagal update rotasi modal di Supabase:', err);
+    return false;
+  }
+}
+
+/**
+ * Deletes a capital rotation project from Supabase
+ */
+export async function deleteSupabaseCapitalRotation(rotId) {
+  if (!isSupabaseConfigured || !supabase || !isOnline() || !rotId) return false;
+
+  try {
+    const { data, error } = await supabase
+      .from('capital_rotations')
+      .delete()
+      .eq('id', rotId)
+      .select();
+
+    if (error) throw error;
+    return Boolean(data && data.length > 0);
+  } catch (err) {
+    console.warn('Gagal hapus rotasi modal di Supabase:', err);
+    return false;
+  }
+}
+
+/**
+ * Wipes all capital rotation projects from Supabase
+ */
+export async function resetSupabaseCapitalRotations() {
+  if (!isSupabaseConfigured || !supabase || !isOnline()) return false;
+
+  try {
+    const { error } = await supabase
+      .from('capital_rotations')
+      .delete()
+      .not('id', 'is', null);
+
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.warn('Gagal reset rotasi modal di Supabase:', err);
     return false;
   }
 }

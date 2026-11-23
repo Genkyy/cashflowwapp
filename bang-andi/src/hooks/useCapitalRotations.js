@@ -1,6 +1,14 @@
 import { useCallback, useMemo } from 'react';
 import { db } from '../lib/db.js';
 import { useLiveQuery, notifyDatabaseChange } from './useLiveQuery.js';
+import {
+  createSupabaseCapitalRotation,
+  updateSupabaseCapitalRotation,
+  deleteSupabaseCapitalRotation,
+  resetSupabaseCapitalRotations,
+} from '../lib/supabaseService.js';
+import { isSupabaseConfigured } from '../lib/supabase.js';
+import { isOnline } from '../lib/errorHandler.js';
 
 /**
  * Custom Hook for CV Amanah Barokah Capital Rotation (Rotasi Modal Berbasis Proyek/Batch)
@@ -132,6 +140,17 @@ export function useCapitalRotations() {
       updated_at: now.toISOString(),
     };
 
+    if (isSupabaseConfigured && isOnline()) {
+      try {
+        const cloudRecord = await createSupabaseCapitalRotation(record);
+        if (cloudRecord?.id) {
+          record.id = cloudRecord.id;
+        }
+      } catch (err) {
+        console.warn('Gagal simpan rotasi ke Supabase Cloud:', err);
+      }
+    }
+
     const id = await db.capital_rotations.add(record);
     notifyDatabaseChange();
     return id;
@@ -151,6 +170,14 @@ export function useCapitalRotations() {
       patch.roi_percentage = cap > 0 ? (prof / cap) * 100 : 0;
     }
 
+    if (isSupabaseConfigured && isOnline()) {
+      try {
+        await updateSupabaseCapitalRotation(id, patch);
+      } catch (err) {
+        console.warn('Gagal update rotasi di Supabase:', err);
+      }
+    }
+
     await db.capital_rotations.update(Number(id) || id, patch);
     notifyDatabaseChange();
   }, []);
@@ -161,11 +188,21 @@ export function useCapitalRotations() {
     const now = new Date();
     const dateStr = completionDate ? new Date(completionDate).toISOString() : now.toISOString();
 
-    await db.capital_rotations.update(Number(id) || id, {
+    const patch = {
       status: 'done',
       completion_date: dateStr,
       updated_at: now.toISOString(),
-    });
+    };
+
+    if (isSupabaseConfigured && isOnline()) {
+      try {
+        await updateSupabaseCapitalRotation(id, patch);
+      } catch (err) {
+        console.warn('Gagal tandai selesai di Supabase:', err);
+      }
+    }
+
+    await db.capital_rotations.update(Number(id) || id, patch);
     notifyDatabaseChange();
   }, []);
 
@@ -177,17 +214,34 @@ export function useCapitalRotations() {
     const existingNotes = existing?.notes || '';
     const updatedNotes = reason ? `${existingNotes}\n[BATAL: ${reason}]`.trim() : existingNotes;
 
-    await db.capital_rotations.update(Number(id) || id, {
+    const patch = {
       status: 'cancel',
       notes: updatedNotes,
       updated_at: now.toISOString(),
-    });
+    };
+
+    if (isSupabaseConfigured && isOnline()) {
+      try {
+        await updateSupabaseCapitalRotation(id, patch);
+      } catch (err) {
+        console.warn('Gagal batalkan rotasi di Supabase:', err);
+      }
+    }
+
+    await db.capital_rotations.update(Number(id) || id, patch);
     notifyDatabaseChange();
   }, []);
 
   // Delete rotation record
   const deleteRotation = useCallback(async (id) => {
     if (!db.capital_rotations || !id) return;
+    if (isSupabaseConfigured && isOnline()) {
+      try {
+        await deleteSupabaseCapitalRotation(id);
+      } catch (err) {
+        console.warn('Gagal hapus rotasi di Supabase:', err);
+      }
+    }
     await db.capital_rotations.delete(Number(id) || id);
     notifyDatabaseChange();
     return true;
@@ -196,6 +250,13 @@ export function useCapitalRotations() {
   // Clear all rotation records (Reset Modal ke Rp 0)
   const clearAllRotations = useCallback(async () => {
     if (!db.capital_rotations) return;
+    if (isSupabaseConfigured && isOnline()) {
+      try {
+        await resetSupabaseCapitalRotations();
+      } catch (err) {
+        console.warn('Gagal reset rotasi modal di Supabase:', err);
+      }
+    }
     await db.capital_rotations.clear();
     notifyDatabaseChange();
     return true;
