@@ -285,7 +285,7 @@ export function useStock() {
       is_livestock = false,
       conversions = [],
     }) => {
-      return await db.transaction(
+      const resultId = await db.transaction(
         'rw',
         [db.items, db.commodities, db.stock_mutations, db.unit_conversions, db.audit_log],
         async () => {

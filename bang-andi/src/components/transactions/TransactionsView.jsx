@@ -64,7 +64,8 @@ export default function TransactionsView() {
     showTransactionForm,
     setShowTransactionForm,
     defaultTransactionType,
-    setDefaultTransactionType
+    setDefaultTransactionType,
+    addNotification,
   } = useAppStore();
   const { voidTransaction } = useTransactions();
 
