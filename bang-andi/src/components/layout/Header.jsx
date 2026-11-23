@@ -29,7 +29,7 @@ import {
  */
 export default function Header() {
   const { setShowTransactionForm, setActiveTab, activeTab } = useAppStore();
-  const { isConfigured, user, setAuthModalOpen } = useAuthStore();
+  const { isConfigured } = useAuthStore();
   const [syncState, setSyncState] = useState({ syncing: false, lastSync: null, error: null });
   const [isRotating, setIsRotating] = useState(false);
   const [showNotificationMenu, setShowNotificationMenu] = useState(false);
@@ -159,27 +159,17 @@ export default function Header() {
             type="button"
             onClick={() => {
               if (isConfigured) {
-                if (!user) {
-                  setAuthModalOpen(true);
-                } else {
-                  handleManualSync();
-                }
-              } else {
-                setAuthModalOpen(true);
+                handleManualSync();
               }
             }}
             title={
               isConfigured
-                ? user
-                  ? `Terhubung sebagai ${user.email}. Klik untuk sinkronisasi manual.`
-                  : 'Klik untuk masuk dengan akun admin Supabase'
+                ? 'Cloud Aktif (HP, Tablet & Laptop Sinkron). Klik untuk sinkronisasi sekarang.'
                 : 'Mode Offline (Lokal)'
             }
             className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition select-none min-h-[38px] touch-target ios-spring-tap ${
               isConfigured
-                ? user
-                  ? 'bg-slate-100 hover:bg-slate-200/70 text-slate-700 border border-slate-200/60 cursor-pointer'
-                  : 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 cursor-pointer'
+                ? 'bg-emerald-50 hover:bg-emerald-100/80 text-emerald-800 border border-emerald-300/80 cursor-pointer'
                 : 'bg-amber-50 text-amber-800 border border-amber-200 cursor-pointer'
             }`}
           >
@@ -195,9 +185,7 @@ export default function Header() {
               {syncState.syncing || isRotating
                 ? 'Menyinkronkan...'
                 : isConfigured
-                  ? user
-                    ? 'Terhubung'
-                    : 'Masuk Cloud'
+                  ? 'Cloud Aktif'
                   : 'Mode Offline'}
             </span>
           </button>

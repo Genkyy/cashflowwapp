@@ -183,8 +183,9 @@ CREATE INDEX IF NOT EXISTS idx_stock_movements_prod ON public.stock_movements(pr
 CREATE INDEX IF NOT EXISTS idx_stock_movements_date ON public.stock_movements(date DESC);
 
 -- ------------------------------------------------------------------------------
--- ROW LEVEL SECURITY (RLS) - SINGLE USER / AUTHENTICATED
+-- ROW LEVEL SECURITY (RLS) - SINKRONISASI LANGSUNG HP, TABLET & LAPTOP
 -- ------------------------------------------------------------------------------
+-- Akses baca & tulis diizinkan langsung untuk aplikasi tanpa perlu login email/password
 ALTER TABLE public.accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.contacts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
@@ -194,46 +195,45 @@ ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transaction_payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock_movements ENABLE ROW LEVEL SECURITY;
 
--- Helper macro policies: Hanya pemilik (auth.uid() = user_id) atau authenticated user jika single-user
-CREATE POLICY "Single User Full Access - accounts" ON public.accounts
-    FOR ALL TO authenticated
-    USING (auth.uid() = user_id OR user_id IS NULL)
-    WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+CREATE POLICY "Direct Access - accounts" ON public.accounts
+    FOR ALL TO anon, authenticated
+    USING (true)
+    WITH CHECK (true);
 
-CREATE POLICY "Single User Full Access - contacts" ON public.contacts
-    FOR ALL TO authenticated
-    USING (auth.uid() = user_id OR user_id IS NULL)
-    WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+CREATE POLICY "Direct Access - contacts" ON public.contacts
+    FOR ALL TO anon, authenticated
+    USING (true)
+    WITH CHECK (true);
 
-CREATE POLICY "Single User Full Access - categories" ON public.categories
-    FOR ALL TO authenticated
-    USING (auth.uid() = user_id OR user_id IS NULL)
-    WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+CREATE POLICY "Direct Access - categories" ON public.categories
+    FOR ALL TO anon, authenticated
+    USING (true)
+    WITH CHECK (true);
 
-CREATE POLICY "Single User Full Access - products" ON public.products
-    FOR ALL TO authenticated
-    USING (auth.uid() = user_id OR user_id IS NULL)
-    WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+CREATE POLICY "Direct Access - products" ON public.products
+    FOR ALL TO anon, authenticated
+    USING (true)
+    WITH CHECK (true);
 
-CREATE POLICY "Single User Full Access - product_units" ON public.product_units
-    FOR ALL TO authenticated
-    USING (auth.uid() = user_id OR user_id IS NULL)
-    WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+CREATE POLICY "Direct Access - product_units" ON public.product_units
+    FOR ALL TO anon, authenticated
+    USING (true)
+    WITH CHECK (true);
 
-CREATE POLICY "Single User Full Access - transactions" ON public.transactions
-    FOR ALL TO authenticated
-    USING (auth.uid() = user_id OR user_id IS NULL)
-    WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+CREATE POLICY "Direct Access - transactions" ON public.transactions
+    FOR ALL TO anon, authenticated
+    USING (true)
+    WITH CHECK (true);
 
-CREATE POLICY "Single User Full Access - transaction_payments" ON public.transaction_payments
-    FOR ALL TO authenticated
-    USING (auth.uid() = user_id OR user_id IS NULL)
-    WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+CREATE POLICY "Direct Access - transaction_payments" ON public.transaction_payments
+    FOR ALL TO anon, authenticated
+    USING (true)
+    WITH CHECK (true);
 
-CREATE POLICY "Single User Full Access - stock_movements" ON public.stock_movements
-    FOR ALL TO authenticated
-    USING (auth.uid() = user_id OR user_id IS NULL)
-    WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+CREATE POLICY "Direct Access - stock_movements" ON public.stock_movements
+    FOR ALL TO anon, authenticated
+    USING (true)
+    WITH CHECK (true);
 
 -- ------------------------------------------------------------------------------
 -- SUPABASE STORAGE BUCKET: receipts (Foto Nota Transaksi)
@@ -248,21 +248,20 @@ VALUES (
 )
 ON CONFLICT (id) DO UPDATE SET public = true;
 
--- Storage policies: Siapapun yang authenticated bisa upload & view
-CREATE POLICY "Public Read Access for receipts" ON storage.objects
-    FOR SELECT TO public
+CREATE POLICY "Direct Access for receipts select" ON storage.objects
+    FOR SELECT TO anon, authenticated
     USING (bucket_id = 'receipts');
 
-CREATE POLICY "Authenticated Users can upload receipts" ON storage.objects
-    FOR INSERT TO authenticated
+CREATE POLICY "Direct Access for receipts insert" ON storage.objects
+    FOR INSERT TO anon, authenticated
     WITH CHECK (bucket_id = 'receipts');
 
-CREATE POLICY "Authenticated Users can update/delete receipts" ON storage.objects
-    FOR UPDATE TO authenticated
+CREATE POLICY "Direct Access for receipts update" ON storage.objects
+    FOR UPDATE TO anon, authenticated
     USING (bucket_id = 'receipts');
 
-CREATE POLICY "Authenticated Users can delete receipts" ON storage.objects
-    FOR DELETE TO authenticated
+CREATE POLICY "Direct Access for receipts delete" ON storage.objects
+    FOR DELETE TO anon, authenticated
     USING (bucket_id = 'receipts');
 
 -- ------------------------------------------------------------------------------

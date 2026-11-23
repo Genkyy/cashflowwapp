@@ -39,7 +39,7 @@ import {
  * 4. Operational Notes (F5.4) & Cloud Sync
  */
 export default function SettingsView() {
-  const { isConfigured, user, setAuthModalOpen } = useAuthStore();
+  const { isConfigured } = useAuthStore();
   const accounts = useLiveQuery(() => db.accounts.toArray(), [], []);
   const operationalNotes = useLiveQuery(() => db.operational_notes.toArray(), [], []);
 
@@ -345,35 +345,33 @@ export default function SettingsView() {
           Koneksi & Sinkronisasi Cloud
         </div>
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs divide-y divide-slate-100 overflow-hidden">
-          {/* Row 0: Auth & Akun Admin */}
-          <div
-            onClick={() => setAuthModalOpen(true)}
-            className="p-4 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition cursor-pointer"
-          >
+          {/* Status Sinkronisasi Multi-Device Otomatis */}
+          <div className="p-4 sm:px-5 flex items-center justify-between gap-3 bg-white">
             <div className="flex items-center gap-3.5 min-w-0">
-              <div className="w-9 h-9 rounded-xl bg-[#071A24] text-[#00D29E] flex items-center justify-center shrink-0 shadow-2xs">
-                <ShieldCheck className="w-5 h-5" />
+              <div className="w-9 h-9 rounded-xl bg-emerald-50 text-[#00D29E] border border-emerald-200/80 flex items-center justify-center shrink-0 shadow-2xs">
+                <Cloud className="w-5 h-5" />
               </div>
               <div className="min-w-0">
                 <div className="text-sm font-bold text-[#0F172A] tracking-tight">
-                  Akun & Sesi Login
+                  Sinkronisasi HP, Tablet & Laptop
                 </div>
                 <div className="text-xs text-[#64748B] truncate">
-                  {user ? user.email : 'Belum masuk (Mode Tamu / Offline)'}
+                  {isConfigured
+                    ? 'Otomatis aktif real-time (tanpa perlu login)'
+                    : 'Koneksi Supabase belum aktif'}
                 </div>
               </div>
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
               <span
-                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${user
+                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${isConfigured
                   ? 'bg-[#ECFDF5] text-[#059669] border-[#A7F3D0]'
                   : 'bg-slate-100 text-slate-600 border-slate-200'
                   }`}
               >
-                {user ? 'Terotentikasi' : 'Buka Login'}
+                {isConfigured ? 'Tersambung' : 'Offline'}
               </span>
-              <ChevronRight className="w-4 h-4 text-slate-300" />
             </div>
           </div>
 

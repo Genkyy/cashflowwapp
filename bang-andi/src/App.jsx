@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from './lib/store.js';
-import { useAuthStore } from './lib/authStore.js';
 import { seedDatabase, syncStandardCatalog } from './lib/seed.js';
-import { setupRealtimeSync } from './lib/supabaseService.js';
+import { setupRealtimeSync, syncFromSupabase } from './lib/supabaseService.js';
 import SplashScreen from './components/layout/SplashScreen.jsx';
 import Header from './components/layout/Header.jsx';
 import Sidebar from './components/layout/Sidebar.jsx';
@@ -15,7 +14,6 @@ import SettingsView from './components/settings/SettingsView.jsx';
 import { Toast } from './components/ui/Toast.jsx';
 import ErrorBoundary from './components/ui/ErrorBoundary.jsx';
 import OfflineBanner from './components/ui/OfflineBanner.jsx';
-import AuthModal from './components/auth/AuthModal.jsx';
 
 /**
  * Main Application Shell (CV Amanah Barokah Mobile & iPad System)
@@ -27,15 +25,14 @@ import AuthModal from './components/auth/AuthModal.jsx';
  */
 export default function App() {
   const { activeTab } = useAppStore();
-  const { initializeAuth, isAuthModalOpen, setAuthModalOpen } = useAuthStore();
   const [isSplashDone, setIsSplashDone] = useState(false);
   const hasSeededRef = useRef(false);
 
   useEffect(() => {
-    // 1. Initialize Supabase Auth in background
-    initializeAuth();
+    // 1. Initial background pull from Supabase so HP, tablet, laptop are instantly in sync
+    syncFromSupabase().catch((e) => console.warn('Sync from Supabase warning:', e));
 
-    // 2. Ensure initial seed data exists locally & standard catalog is synchronized
+    // 2. Ensure initial seed data exists locally
     if (!hasSeededRef.current) {
       hasSeededRef.current = true;
       seedDatabase()
@@ -43,7 +40,7 @@ export default function App() {
         .catch((e) => console.warn('Seed database warning:', e));
     }
 
-    // 3. Setup Supabase Realtime synchronization across iPad and HP
+    // 3. Setup Supabase Realtime synchronization across HP, tablet, and laptop
     const cleanupRealtime = setupRealtimeSync();
 
     return () => {
@@ -51,7 +48,7 @@ export default function App() {
         cleanupRealtime();
       }
     };
-  }, [initializeAuth]);
+  }, []);
 
   // Mobile Banking Animated Splash Screen
   if (!isSplashDone) {
@@ -85,9 +82,6 @@ export default function App() {
 
         {/* Dynamic Alert Toast */}
         <Toast />
-
-        {/* Bank-Grade Auth & Session Modal */}
-        <AuthModal isOpen={isAuthModalOpen} onClose={() => setAuthModalOpen(false)} />
       </div>
     </ErrorBoundary>
   );
