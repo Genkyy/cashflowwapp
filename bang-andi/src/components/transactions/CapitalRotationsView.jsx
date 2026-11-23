@@ -24,7 +24,8 @@ import {
   Eye,
   ChevronDown,
   Check,
-  Package
+  Package,
+  RotateCcw
 } from 'lucide-react';
 
 const COMMON_COMMODITIES = [
@@ -47,6 +48,7 @@ export default function CapitalRotationsView() {
     markAsDone,
     markAsCancel,
     deleteRotation,
+    clearAllRotations,
     calculate8PercentMargin,
   } = useCapitalRotations();
 
@@ -425,15 +427,37 @@ export default function CapitalRotationsView() {
             ))}
           </div>
 
-          {/* New Project CTA Button */}
-          <button
-            type="button"
-            onClick={handleOpenAddModal}
-            className="inline-flex items-center justify-center gap-2 bg-[#071A24] hover:bg-[#0B2533] active:scale-95 text-white px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm shadow-sm transition ios-spring-tap cursor-pointer shrink-0"
-          >
-            <Plus className="w-4 h-4 text-[#00D29E] stroke-[3]" />
-            <span>+ Catat Proyek Rotasi</span>
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            {rotations.length > 0 && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (window.confirm('Kosongkan semua data proyek modal? Seluruh catatan modal akan dihapus permanen (kembali ke Rp 0).')) {
+                    await clearAllRotations();
+                    addNotification({
+                      message: 'Seluruh proyek modal berhasil dikosongkan (Rp 0).',
+                      type: 'success',
+                    });
+                  }
+                }}
+                className="inline-flex items-center justify-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200/80 px-3.5 py-2.5 rounded-2xl font-bold text-xs shadow-2xs transition ios-spring-tap cursor-pointer shrink-0"
+                title="Hapus semua proyek modal agar kembali ke Rp 0"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+                <span>Kosongkan Modal (Reset)</span>
+              </button>
+            )}
+
+            {/* New Project CTA Button */}
+            <button
+              type="button"
+              onClick={handleOpenAddModal}
+              className="inline-flex items-center justify-center gap-2 bg-[#071A24] hover:bg-[#0B2533] active:scale-95 text-white px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm shadow-sm transition ios-spring-tap cursor-pointer shrink-0"
+            >
+              <Plus className="w-4 h-4 text-[#00D29E] stroke-[3]" />
+              <span>+ Catat Proyek Rotasi</span>
+            </button>
+          </div>
         </div>
 
         {/* Search Bar + Commodity Filter Trigger */}
@@ -646,9 +670,20 @@ export default function CapitalRotationsView() {
                     {/* Delete */}
                     <button
                       type="button"
-                      onClick={() => {
-                        if (confirm(`Hapus catatan proyek "${item.project_name}"?`)) {
-                          deleteRotation(item.id);
+                      onClick={async () => {
+                        if (window.confirm(`Hapus catatan proyek "${item.project_name}"?`)) {
+                          try {
+                            await deleteRotation(item.id);
+                            addNotification({
+                              message: `Proyek "${item.project_name}" berhasil dihapus.`,
+                              type: 'info',
+                            });
+                          } catch (err) {
+                            addNotification({
+                              message: err.message || 'Gagal menghapus catatan proyek.',
+                              type: 'error',
+                            });
+                          }
                         }
                       }}
                       className="p-1.5 rounded-xl hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition cursor-pointer"

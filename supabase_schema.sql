@@ -277,6 +277,30 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.transaction_payments;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.stock_movements;
 
 -- ------------------------------------------------------------------------------
+-- 9. TABEL: system_heartbeat (Pencegah Auto-Pause 7 Hari Supabase Free Tier)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.system_heartbeat (
+    id INT PRIMARY KEY DEFAULT 1,
+    last_ping TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    notes TEXT DEFAULT 'Vercel Keep-Alive Heartbeat',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+ALTER TABLE public.system_heartbeat ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Full Access - system_heartbeat" ON public.system_heartbeat;
+CREATE POLICY "Full Access - system_heartbeat" ON public.system_heartbeat
+    FOR ALL TO anon, authenticated, service_role
+    USING (true)
+    WITH CHECK (true);
+
+GRANT ALL ON TABLE public.system_heartbeat TO anon, authenticated, service_role;
+
+INSERT INTO public.system_heartbeat (id, last_ping, notes)
+VALUES (1, timezone('utc'::text, now()), 'Initial heartbeat')
+ON CONFLICT (id) DO NOTHING;
+
+-- ------------------------------------------------------------------------------
 -- DATA AWAL (SEED DATA BANG ANDI)
 -- ------------------------------------------------------------------------------
 -- 1. Kategori Komoditas & Biaya

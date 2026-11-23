@@ -1234,13 +1234,12 @@ export async function triggerInAppKeepAlive() {
       return;
     }
 
-    const { data: accounts } = await supabase.from('accounts').select('id').limit(1);
-    if (Array.isArray(accounts) && accounts.length > 0) {
-      await supabase
-        .from('accounts')
-        .update({ updated_at: new Date().toISOString() })
-        .eq('id', accounts[0].id);
-    }
+    const isoDate = new Date().toISOString();
+    // Touch dedicated system_heartbeat table instead of polluting accounts table
+    await supabase
+      .from('system_heartbeat')
+      .upsert({ id: 1, last_ping: isoDate, notes: 'In-App Heartbeat' }, { onConflict: 'id' });
+
     localStorage.setItem('supabase_last_keepalive_ping', String(now));
   } catch (err) {
     // Non-blocking background keep-alive

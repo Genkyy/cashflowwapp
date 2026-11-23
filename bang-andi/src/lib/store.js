@@ -11,6 +11,8 @@ export const useAppStore = create((set) => ({
   // Navigation
   activeTab: 'dashboard',
   setActiveTab: (tab) => set({ activeTab: tab }),
+  transactionSubTab: 'transactions', // 'transactions' | 'rotations'
+  setTransactionSubTab: (subTab) => set({ transactionSubTab: subTab }),
 
   // Modal / Form Dialog States
   showTransactionForm: false,

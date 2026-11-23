@@ -190,6 +190,15 @@ export function useCapitalRotations() {
     if (!db.capital_rotations || !id) return;
     await db.capital_rotations.delete(Number(id) || id);
     notifyDatabaseChange();
+    return true;
+  }, []);
+
+  // Clear all rotation records (Reset Modal ke Rp 0)
+  const clearAllRotations = useCallback(async () => {
+    if (!db.capital_rotations) return;
+    await db.capital_rotations.clear();
+    notifyDatabaseChange();
+    return true;
   }, []);
 
   // Helper utility: calculate 8% margin instantly
@@ -210,6 +219,7 @@ export function useCapitalRotations() {
     markAsDone,
     markAsCancel,
     deleteRotation,
+    clearAllRotations,
     calculate8PercentMargin,
   };
 }

@@ -54,6 +54,8 @@ export default function TransactionsView() {
     defaultTransactionType,
     setDefaultTransactionType,
     addNotification,
+    transactionSubTab,
+    setTransactionSubTab,
   } = useAppStore();
   const { voidTransaction, deleteTransaction } = useTransactions();
 
@@ -63,7 +65,13 @@ export default function TransactionsView() {
   const items = useLiveQuery(() => db.items.toArray(), [], []);
 
   // 2. Main View Mode: 'transactions' (Kasir/Dagang Ritel) | 'rotations' (Proyek Rotasi Modal)
-  const [mainTab, setMainTab] = useState('transactions');
+  const [mainTab, setMainTab] = useState(transactionSubTab || 'transactions');
+
+  useEffect(() => {
+    if (transactionSubTab) {
+      setMainTab(transactionSubTab);
+    }
+  }, [transactionSubTab]);
 
   // 3. Banking Timeline Filter & Search State
   const [selectedPeriod, setSelectedPeriod] = useState('this_month'); // this_month (Anti-Lag default) | all | last_30_days
@@ -526,7 +534,10 @@ export default function TransactionsView() {
       <div className="flex p-1 bg-slate-200/80 rounded-2xl border border-slate-300/60 max-w-md w-full">
         <button
           type="button"
-          onClick={() => setMainTab('transactions')}
+          onClick={() => {
+            setMainTab('transactions');
+            setTransactionSubTab('transactions');
+          }}
           className={`flex-1 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
             mainTab === 'transactions'
               ? 'bg-[#071A24] text-white shadow-xs'
@@ -538,7 +549,10 @@ export default function TransactionsView() {
         </button>
         <button
           type="button"
-          onClick={() => setMainTab('rotations')}
+          onClick={() => {
+            setMainTab('rotations');
+            setTransactionSubTab('rotations');
+          }}
           className={`flex-1 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
             mainTab === 'rotations'
               ? 'bg-[#071A24] text-white shadow-xs'

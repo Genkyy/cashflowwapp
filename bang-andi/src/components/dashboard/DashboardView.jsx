@@ -45,6 +45,7 @@ export default function DashboardView() {
     setActiveTab,
     setDefaultTransactionType,
     setShowStockForm,
+    setTransactionSubTab,
   } = useAppStore();
 
   const [isBalanceHidden, setIsBalanceHidden] = useState(false);
@@ -418,7 +419,10 @@ export default function DashboardView() {
               </div>
               {waitingModalTotal > 0 && (
                 <div
-                  onClick={() => setActiveTab('transactions')}
+                  onClick={() => {
+                    setTransactionSubTab('rotations');
+                    setActiveTab('transactions');
+                  }}
                   className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-300 text-xs font-bold cursor-pointer hover:bg-amber-400/30 transition"
                 >
                   <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
@@ -516,7 +520,10 @@ export default function DashboardView() {
         {/* CV AMANAH BAROKAH: MODAL BERJALAN (WAITING) NOTIFICATION BANNER */}
         {waitingRotationsCount > 0 && (
           <div
-            onClick={() => setActiveTab('transactions')}
+            onClick={() => {
+              setTransactionSubTab('rotations');
+              setActiveTab('transactions');
+            }}
             className="bg-gradient-to-r from-amber-500/10 via-amber-400/15 to-emerald-500/10 border border-amber-300/80 rounded-3xl p-4 sm:p-5 flex items-center justify-between gap-4 cursor-pointer hover:border-amber-400 transition-all shadow-xs"
           >
             <div className="flex items-center gap-3.5 min-w-0">
