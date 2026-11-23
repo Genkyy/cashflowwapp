@@ -545,6 +545,8 @@ export default function SettingsView() {
                 Amanah Dalam Usaha, Barokah Untuk Semua
               </div>
             </div>
+
+
           </div>
           <p className="text-xs text-[#64748B] leading-relaxed pt-2 border-t border-slate-100">
             Sistem manajemen komoditas terpadu untuk <strong>Minyak, Telur, Sapi, Domba, dan Susu</strong>. Dilengkapi Moving Average HPP, pencatatan nota offline-first, dan sinkronisasi real-time Supabase PostgreSQL.
@@ -745,7 +747,7 @@ export default function SettingsView() {
               <li>Semua kontak rekanan & catatan operasional</li>
             </ul>
             <p className="pt-1 text-[11px] text-rose-700">
-              Setelah reset, sistem akan menyiapkan <strong>1 Akun Kas Utama (Saldo: Rp 0)</strong> dan katalog komoditas bersih dengan stok 0 yang siap Anda uji dengan data riil.
+              Setelah reset, sistem akan menyiapkan <strong>1 Akun Kas Utama (Saldo: Rp 0)</strong> dan kategori usaha bersih tanpa transaksi, stok, atau kontak dummy. Anda siap memasukkan data riil.
             </p>
           </div>
 
@@ -853,16 +855,14 @@ export default function SettingsView() {
               <button
                 type="button"
                 onClick={() => setNotesTab('active')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                  notesTab === 'active'
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${notesTab === 'active'
                     ? 'bg-[#071A24] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
-                }`}
+                  }`}
               >
                 <span>Belum Selesai</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                  notesTab === 'active' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
-                }`}>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${notesTab === 'active' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                  }`}>
                   {activeNotes.length}
                 </span>
               </button>
@@ -870,16 +870,14 @@ export default function SettingsView() {
               <button
                 type="button"
                 onClick={() => setNotesTab('completed')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                  notesTab === 'completed'
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${notesTab === 'completed'
                     ? 'bg-[#00D29E] text-[#071A24] font-black shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
-                }`}
+                  }`}
               >
                 <span>Catatan Selesai</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                  notesTab === 'completed' ? 'bg-[#071A24]/15 text-[#071A24]' : 'bg-slate-200 text-slate-700'
-                }`}>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${notesTab === 'completed' ? 'bg-[#071A24]/15 text-[#071A24]' : 'bg-slate-200 text-slate-700'
+                  }`}>
                   {completedNotes.length}
                 </span>
               </button>
@@ -991,13 +989,12 @@ export default function SettingsView() {
 
                     <div className="flex items-center gap-2 shrink-0">
                       <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                          note.priority === 'high'
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${note.priority === 'high'
                             ? 'bg-rose-50 text-rose-700 border-rose-200'
                             : note.priority === 'medium'
-                            ? 'bg-amber-50 text-amber-700 border-amber-200'
-                            : 'bg-slate-100 text-slate-600 border-slate-200'
-                        }`}
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : 'bg-slate-100 text-slate-600 border-slate-200'
+                          }`}
                       >
                         {note.priority === 'high' ? 'Tinggi' : note.priority === 'medium' ? 'Sedang' : 'Rendah'}
                       </span>

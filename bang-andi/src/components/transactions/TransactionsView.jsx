@@ -1225,7 +1225,9 @@ export default function TransactionsView() {
                           }`}
                           required
                         >
-                          <option value="">Pilih Komoditas / Barang</option>
+                          <option value="">
+                            {items && items.length > 0 ? 'Pilih Komoditas / Barang' : 'Belum ada barang (Tambah di menu Stok)'}
+                          </option>
                           {items?.map((p) => {
                             const curStk = Number(p.stock) || 0;
                             return (

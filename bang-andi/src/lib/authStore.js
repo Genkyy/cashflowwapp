@@ -53,8 +53,8 @@ export const useAuthStore = create((set) => ({
     if (!isSupabaseConfigured || !supabase) {
       // Local fallback login
       if (email && password) {
-        const mockUser = { id: 'bang-andi-owner', email };
-        set({ user: mockUser, loading: false, isGuest: false });
+        const localUser = { id: 'bang-andi-owner', email };
+        set({ user: localUser, loading: false, isGuest: false });
         return { success: true };
       }
       set({ loading: false, authError: 'Email dan password harus diisi' });
@@ -87,8 +87,8 @@ export const useAuthStore = create((set) => ({
     set({ loading: true, authError: null });
 
     if (!isSupabaseConfigured || !supabase) {
-      const mockUser = { id: 'bang-andi-owner', email };
-      set({ user: mockUser, loading: false, isGuest: false });
+      const localUser = { id: 'bang-andi-owner', email };
+      set({ user: localUser, loading: false, isGuest: false });
       return { success: true };
     }
 

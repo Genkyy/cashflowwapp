@@ -6,5 +6,8 @@
     "dev": "pnpm --dir bang-andi dev",
     "build": "pnpm --dir bang-andi build",
     "preview": "pnpm --dir bang-andi preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.119.2"
   }
 }

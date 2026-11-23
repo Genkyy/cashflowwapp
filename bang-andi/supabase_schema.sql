@@ -293,34 +293,10 @@ INSERT INTO public.categories (id, name, type, icon, color, sort_order) VALUES
 ('c1000000-0000-0000-0000-000000000009', 'Operasional & Gaji', 'expense', 'Users', '#64748B', 9)
 ON CONFLICT (id) DO NOTHING;
 
--- 2. Akun Kas & Bank
+-- 2. Akun Kas & Bank (Akun Kas Utama Bersih - Saldo Rp 0)
 INSERT INTO public.accounts (id, name, type, account_number, bank_name, initial_balance, balance, notes) VALUES
-('a1000000-0000-0000-0000-000000000001', 'Kas Tunai Toko', 'cash', '-', '-', 15000000, 13960000, 'Uang kas fisik di laci'),
-('a1000000-0000-0000-0000-000000000002', 'Bank BCA Andi', 'bank', '123-456-7890', 'BCA', 50000000, 47825000, 'Rekening operasional utama')
+('a1000000-0000-0000-0000-000000000001', 'Kas Utama', 'cash', '-', '-', 0.00, 0.00, 'Akun Kas Tunai Operasional')
 ON CONFLICT (id) DO NOTHING;
 
--- 3. Kontak Pelanggan & Supplier
-INSERT INTO public.contacts (id, name, type, phone, address, notes) VALUES
-('b1000000-0000-0000-0000-000000000001', 'Bu Siti (Warung Berkah)', 'customer', '081234567891', 'Pasar Baru Blok A No. 12', 'Langganan telur & minyak'),
-('b1000000-0000-0000-0000-000000000002', 'Pak Haji Rahmat (Resto)', 'customer', '081234567892', 'Jl. Merdeka Barat No. 45', 'Pembeli susu sapi & daging'),
-('b1000000-0000-0000-0000-000000000003', 'PT Pangan Sumber Makmur', 'supplier', '082198765432', 'Kawasan Industri Cikarang', 'Supplier minyak curah'),
-('b1000000-0000-0000-0000-000000000004', 'Koperasi Peternak Mandiri', 'supplier', '085612349876', 'Lembang Bandung', 'Supplier pakan & bibit')
-ON CONFLICT (id) DO NOTHING;
-
--- 4. Produk Komoditas
-INSERT INTO public.products (id, category_id, code, name, base_unit, stock, hpp, selling_price, min_stock, is_perishable, is_livestock) VALUES
-('p1000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 'MYK-CURAH', 'Minyak Goreng Curah', 'liter', 160.00, 14000.00, 16000.00, 50.00, false, false),
-('p1000000-0000-0000-0000-000000000002', 'c1000000-0000-0000-0000-000000000002', 'TLR-RAS', 'Telur Ayam Ras', 'kg', 340.00, 28217.00, 32000.00, 50.00, true, false),
-('p1000000-0000-0000-0000-000000000003', 'c1000000-0000-0000-0000-000000000003', 'SPI-LIMOUSIN', 'Sapi Limousin', 'ekor', 5.00, 18000000.00, 22000000.00, 2.00, false, true),
-('p1000000-0000-0000-0000-000000000004', 'c1000000-0000-0000-0000-000000000004', 'DMB-GARUT', 'Domba Garut', 'ekor', 12.00, 3500000.00, 4500000.00, 4.00, false, true),
-('p1000000-0000-0000-0000-000000000005', 'c1000000-0000-0000-0000-000000000005', 'SSU-MURNI', 'Susu Sapi Segar', 'liter', 80.00, 11000.00, 15000.00, 20.00, true, false)
-ON CONFLICT (id) DO NOTHING;
-
--- 5. Multi-Satuan Produk
-INSERT INTO public.product_units (id, product_id, unit_name, conversion_factor, is_default) VALUES
-('u1000000-0000-0000-0000-000000000001', 'p1000000-0000-0000-0000-000000000001', 'Jeriken (18 L)', 18.0000, false),
-('u1000000-0000-0000-0000-000000000002', 'p1000000-0000-0000-0000-000000000001', 'Drum (200 L)', 200.0000, false),
-('u1000000-0000-0000-0000-000000000003', 'p1000000-0000-0000-0000-000000000002', 'Peti (15 kg)', 15.0000, false),
-('u1000000-0000-0000-0000-000000000004', 'p1000000-0000-0000-0000-000000000002', 'Tray (1.8 kg)', 1.8000, false),
-('u1000000-0000-0000-0000-000000000005', 'p1000000-0000-0000-0000-000000000005', 'Can (20 L)', 20.0000, false)
-ON CONFLICT (id) DO NOTHING;
+-- Catatan: Kontak, Produk, Multi-Satuan, dan Transaksi Bersih 100% (Tanpa Data Dummy).
+-- User dapat mulai menambahkan produk dan kontak riil langsung melalui aplikasi.
