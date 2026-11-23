@@ -147,6 +147,7 @@ export async function resetDatabaseToReal() {
     if (db.livestock_records) await db.livestock_records.clear();
     if (db.livestock_weights) await db.livestock_weights.clear();
     if (db.livestock_health) await db.livestock_health.clear();
+    if (db.photo_attachments) await db.photo_attachments.clear();
 
     // 2. Reset Accounts to exactly 1 single Kas Utama account (balance: 0)
     await db.accounts.clear();

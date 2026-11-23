@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useLiveQuery } from '../../hooks/useLiveQuery.js';
 import { db } from '../../lib/db.js';
 import { useAuthStore } from '../../lib/authStore.js';
-import { syncFromSupabase } from '../../lib/supabaseService.js';
+import { syncFromSupabase, resetSupabaseDatabase } from '../../lib/supabaseService.js';
 import { formatCurrency } from '../../lib/formatters.js';
 import { exportToJSON } from '../../lib/exporters.js';
 import { resetDatabaseToReal } from '../../lib/seed.js';
@@ -98,9 +98,30 @@ export default function SettingsView() {
   const handleConfirmReset = async () => {
     setIsResetting(true);
     try {
+      // 1. Reset Supabase Cloud database jika terkonfigurasi & online
+      let cloudResetSuccess = false;
+      if (isConfigured) {
+        try {
+          await resetSupabaseDatabase();
+          cloudResetSuccess = true;
+        } catch (cloudErr) {
+          console.warn('Gagal reset di Supabase Cloud:', cloudErr);
+        }
+      }
+
+      // 2. Reset Local Dexie IndexedDB
       await resetDatabaseToReal();
+
       setActiveSection('overview');
-      alert('Database berhasil direset ke mode data riil! Seluruh data dummy telah dibersihkan.');
+
+      if (isConfigured && !cloudResetSuccess) {
+        alert(
+          'Penyimpanan lokal di perangkat Anda telah bersih (0 transaksi & 0 stok)!\n\n' +
+          'Catatan Supabase Cloud: Jika data di dashboard Supabase masih terlihat, jalankan query TRUNCATE di SQL Editor Supabase untuk membuka akses penghapusan cloud.'
+        );
+      } else {
+        alert('Database berhasil direset bersih! Seluruh data di perangkat dan Supabase Cloud telah dikosongkan.');
+      }
     } catch (err) {
       alert('Gagal mereset database: ' + err.message);
     } finally {
@@ -733,19 +754,19 @@ export default function SettingsView() {
           <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl space-y-2 text-xs text-rose-900 leading-relaxed">
             <p className="font-extrabold text-sm text-rose-700 flex items-center gap-1.5">
               <AlertTriangle className="w-4 h-4 shrink-0" />
-              Konfirmasi Pengosongan Data Dummy
+              Konfirmasi Reset Database Total (Perangkat & Cloud)
             </p>
             <p>
-              Tindakan ini akan <strong>menghapus permanen</strong> seluruh data dummy:
+              Tindakan ini akan <strong>menghapus permanen</strong> seluruh data di perangkat ini dan Supabase Cloud:
             </p>
             <ul className="list-disc pl-5 space-y-0.5 text-rose-800">
               <li>Semua riwayat transaksi mutasi kas & dagang</li>
+              <li>Semua data stok & penyesuaian komoditas</li>
               <li>Semua proyek perputaran modal (rotasi)</li>
-              <li>Semua histori penyesuaian & mutasi stok</li>
               <li>Semua kontak rekanan & catatan operasional</li>
             </ul>
             <p className="pt-1 text-[11px] text-rose-700">
-              Setelah reset, sistem akan menyiapkan <strong>1 Akun Kas Utama (Saldo: Rp 0)</strong> dan kategori usaha bersih tanpa transaksi, stok, atau kontak dummy. Anda siap memasukkan data riil.
+              Setelah reset, sistem akan menyiapkan <strong>1 Akun Kas Utama Bersih (Saldo: Rp 0)</strong> di HP/Laptop dan Supabase Cloud.
             </p>
           </div>
 

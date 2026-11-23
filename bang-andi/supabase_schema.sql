@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS public.categories (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
+
 -- ------------------------------------------------------------------------------
 -- 4. TABEL: products (Barang Komoditas & Hewan Ternak)
 -- ------------------------------------------------------------------------------

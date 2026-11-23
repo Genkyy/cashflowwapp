@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from './lib/store.js';
 import { seedDatabase, syncStandardCatalog } from './lib/seed.js';
-import { setupRealtimeSync, syncFromSupabase } from './lib/supabaseService.js';
+import { setupRealtimeSync, syncFromSupabase, triggerInAppKeepAlive } from './lib/supabaseService.js';
 import SplashScreen from './components/layout/SplashScreen.jsx';
 import Header from './components/layout/Header.jsx';
 import Sidebar from './components/layout/Sidebar.jsx';
@@ -31,6 +31,7 @@ export default function App() {
   useEffect(() => {
     // 1. Initial background pull from Supabase so HP, tablet, laptop are instantly in sync
     syncFromSupabase().catch((e) => console.warn('Sync from Supabase warning:', e));
+    triggerInAppKeepAlive().catch(() => {});
 
     // 2. Ensure initial seed data exists locally
     if (!hasSeededRef.current) {

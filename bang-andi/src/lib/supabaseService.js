@@ -67,18 +67,31 @@ export async function syncFromSupabase() {
       .select('*')
       .order('name');
 
-    if (!accErr && Array.isArray(accounts) && accounts.length > 0) {
+    if (!accErr && Array.isArray(accounts)) {
       await db.accounts.clear();
-      for (const acc of accounts) {
+      if (accounts.length > 0) {
+        for (const acc of accounts) {
+          await db.accounts.put({
+            id: acc.id,
+            name: acc.name,
+            type: acc.type,
+            balance: Number(acc.balance) || 0,
+            account_number: acc.account_number,
+            bank_name: acc.bank_name,
+            is_active: acc.is_active ? 1 : 0,
+            notes: acc.notes,
+          });
+        }
+      } else {
         await db.accounts.put({
-          id: acc.id,
-          name: acc.name,
-          type: acc.type,
-          balance: Number(acc.balance) || 0,
-          account_number: acc.account_number,
-          bank_name: acc.bank_name,
-          is_active: acc.is_active ? 1 : 0,
-          notes: acc.notes,
+          code: 'ACC-KAS',
+          name: 'Kas Utama',
+          type: 'cash',
+          account_number: '',
+          balance: 0,
+          is_active: 1,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         });
       }
     }
@@ -89,7 +102,7 @@ export async function syncFromSupabase() {
       .select('*')
       .order('name');
 
-    if (!conErr && Array.isArray(contacts) && contacts.length > 0) {
+    if (!conErr && Array.isArray(contacts)) {
       await db.contacts.clear();
       for (const con of contacts) {
         await db.contacts.put({
@@ -110,7 +123,7 @@ export async function syncFromSupabase() {
       .select('*')
       .order('name');
 
-    if (!prodErr && Array.isArray(products) && products.length > 0) {
+    if (!prodErr && Array.isArray(products)) {
       await db.items.clear();
       for (const prod of products) {
         await db.items.put({
@@ -137,7 +150,7 @@ export async function syncFromSupabase() {
       .from('product_units')
       .select('*');
 
-    if (!unitErr && Array.isArray(units) && units.length > 0) {
+    if (!unitErr && Array.isArray(units)) {
       await db.unit_conversions.clear();
       for (const u of units) {
         await db.unit_conversions.put({
@@ -156,7 +169,7 @@ export async function syncFromSupabase() {
       .select('*')
       .order('date', { ascending: false });
 
-    if (!txErr && Array.isArray(transactions) && transactions.length > 0) {
+    if (!txErr && Array.isArray(transactions)) {
       await db.transactions.clear();
       await db.transaction_items.clear();
 
@@ -211,7 +224,7 @@ export async function syncFromSupabase() {
       .select('*')
       .order('payment_date', { ascending: false });
 
-    if (!payErr && Array.isArray(payments) && payments.length > 0) {
+    if (!payErr && Array.isArray(payments)) {
       await db.installments.clear();
       for (const pay of payments) {
         await db.installments.put({
@@ -233,7 +246,7 @@ export async function syncFromSupabase() {
       .select('*')
       .order('date', { ascending: false });
 
-    if (!movErr && Array.isArray(movements) && movements.length > 0) {
+    if (!movErr && Array.isArray(movements)) {
       await db.stock_mutations.clear();
       for (const m of movements) {
         await db.stock_mutations.put({
@@ -828,5 +841,74 @@ export async function adjustSupabaseStock(productId, delta, reason = 'Penyesuaia
   } catch (err) {
     console.warn('Gagal catat penyesuaian stok di Supabase:', err);
     return false;
+  }
+}
+
+/**
+ * Reset and clear all user data from Supabase Cloud
+ * Deletes transactions, payments, stock movements, products, units, contacts, and accounts
+ * Recreates default clean primary cash account (Saldo: Rp 0)
+ */
+export async function resetSupabaseDatabase() {
+  if (!isSupabaseConfigured || !supabase || !isOnline()) {
+    return false;
+  }
+
+  try {
+    // 1. Delete in reverse dependency order (child tables first)
+    await supabase.from('stock_movements').delete().not('id', 'is', null);
+    await supabase.from('transaction_payments').delete().not('id', 'is', null);
+    await supabase.from('transactions').delete().not('id', 'is', null);
+    await supabase.from('product_units').delete().not('id', 'is', null);
+    await supabase.from('products').delete().not('id', 'is', null);
+    await supabase.from('contacts').delete().not('id', 'is', null);
+    await supabase.from('accounts').delete().not('id', 'is', null);
+
+    // 2. Insert 1 clean Kas Utama account (balance 0)
+    await supabase.from('accounts').insert({
+      id: 'a1000000-0000-0000-0000-000000000001',
+      name: 'Kas Utama',
+      type: 'cash',
+      account_number: '-',
+      bank_name: '-',
+      initial_balance: 0,
+      balance: 0,
+      notes: 'Akun Kas Tunai Operasional',
+      is_active: true,
+    });
+
+    return true;
+  } catch (err) {
+    console.error('Error in resetSupabaseDatabase:', err);
+    throw err;
+  }
+}
+
+/**
+ * In-App Auto Keepalive Heartbeat
+ * Checks if last heartbeat > 24 hours ago, and touches Supabase to reset 7-day pause timer.
+ */
+export async function triggerInAppKeepAlive() {
+  if (!isSupabaseConfigured || !supabase || !isOnline()) return;
+
+  try {
+    const lastPingStr = localStorage.getItem('supabase_last_keepalive_ping');
+    const now = Date.now();
+    // Ping if never pinged or if more than 24 hours have passed
+    if (lastPingStr && now - Number(lastPingStr) < 24 * 60 * 60 * 1000) {
+      return;
+    }
+
+    const { data: accounts } = await supabase.from('accounts').select('id').limit(1);
+    if (Array.isArray(accounts) && accounts.length > 0) {
+      await supabase
+        .from('accounts')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', accounts[0].id);
+    }
+    localStorage.setItem('supabase_last_keepalive_ping', String(now));
+  } catch (err) {
+    // Non-blocking background keep-alive
+    console.debug('Supabase keepalive ping debug:', err);
   }
 }
