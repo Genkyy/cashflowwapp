@@ -11,6 +11,8 @@ import {
   deleteSupabaseProduct,
   adjustSupabaseStock,
 } from '../lib/supabaseService.js';
+import { isSupabaseConfigured } from '../lib/supabase.js';
+import { isOnline } from '../lib/errorHandler.js';
 
 export function getAllItemsQuery() {
   return db.items.toArray();
@@ -173,7 +175,7 @@ export function useStock() {
           `Penyesuaian stok tidak valid: stok akhir tidak boleh minus (Stok saat ini: ${currentStock} ${item.base_unit || ''}, pengurangan: ${Math.abs(delta)}).`
         );
       }
-      const newStock = Math.max(0, currentStock + delta);
+      const newStock = Math.max(0, Math.round((currentStock + delta) * 1000) / 1000);
       const now = new Date();
 
       await db.items.update(item.id, {
@@ -546,14 +548,25 @@ export function useStock() {
 
   /**
    * Delete or archive a stock item
+   * Note: Deletion is confirmed by Supabase first when online.
+   * No optimistic local update is made if cloud deletion fails,
+   * preventing the item from reappearing after sync/refresh.
    */
   const deleteItem = useCallback(
     async (itemId) => {
-      const res = await db.transaction('rw', [db.items, db.unit_conversions, db.audit_log], async () => {
-        const item = await db.items.get(Number(itemId) || itemId);
-        if (!item) throw new Error('Barang tidak ditemukan');
+      const item = await db.items.get(Number(itemId) || itemId);
+      if (!item) throw new Error('Barang tidak ditemukan');
 
-        // Delete item and its conversions
+      // 1. If Supabase is configured, delete in Supabase Cloud FIRST
+      if (isSupabaseConfigured) {
+        if (!isOnline()) {
+          throw new Error('Tidak dapat menghapus barang saat offline. Koneksi internet diperlukan agar data di cloud terhapus dan tidak muncul kembali.');
+        }
+        await deleteSupabaseProduct(itemId);
+      }
+
+      // 2. Only after Supabase confirms deletion, delete locally in Dexie
+      await db.transaction('rw', [db.items, db.unit_conversions, db.audit_log], async () => {
         await db.unit_conversions.where('item_id').equals(item.id).delete();
         await db.items.delete(item.id);
 
@@ -566,16 +579,9 @@ export function useStock() {
         });
 
         notifyDatabaseChange();
-        return true;
       });
 
-      try {
-        await deleteSupabaseProduct(itemId);
-      } catch {
-        // Offline
-      }
-
-      return res;
+      return true;
     },
     []
   );

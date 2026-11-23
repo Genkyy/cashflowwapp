@@ -170,9 +170,62 @@ export async function syncFromSupabase() {
       .order('date', { ascending: false });
 
     if (!txErr && Array.isArray(transactions)) {
+      // Preserve any local offline transactions that haven't been pushed to Supabase
+      const localOfflineTxs = await db.transactions
+        .filter((t) => t.is_offline === true || (typeof t.id === 'string' && t.id.startsWith('loc-')))
+        .toArray();
+
+      // Attempt to push each offline transaction to Supabase
+      for (const offlineTx of localOfflineTxs) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          const offlineItems = await db.transaction_items.where('transaction_id').equals(offlineTx.id).toArray();
+          const sanitizedSubType = offlineTx.sub_type === 'sales' ? 'sale' : (offlineTx.sub_type || 'operational');
+
+          const { data: pushedTx, error: pushErr } = await supabase
+            .from('transactions')
+            .insert({
+              user_id: user?.id || null,
+              invoice_number: offlineTx.invoice_number,
+              type: offlineTx.type,
+              sub_type: sanitizedSubType,
+              category_id: offlineTx.category_id || null,
+              category_name: offlineTx.category || '',
+              contact_id: offlineTx.contact_id || null,
+              account_id: offlineTx.account_id || null,
+              to_account_id: offlineTx.to_account_id || null,
+              total_amount: offlineTx.total_amount,
+              discount_amount: offlineTx.discount_amount || 0,
+              paid_amount: offlineTx.paid_amount,
+              payment_status: offlineTx.payment_status,
+              status: offlineTx.status,
+              receipt_url: offlineTx.receipt_url || null,
+              date: offlineTx.date,
+              due_date: offlineTx.due_date || null,
+              notes: offlineTx.notes || '',
+              items_snapshot: offlineItems,
+            })
+            .select()
+            .single();
+
+          if (!pushErr && pushedTx) {
+            await db.transactions.delete(offlineTx.id);
+            await db.transaction_items.where('transaction_id').equals(offlineTx.id).delete();
+          }
+        } catch {
+          // If push fails, keep offline transaction preserved in local Dexie
+        }
+      }
+
+      // Re-fetch remaining unsynced transactions to ensure they are preserved
+      const remainingOffline = await db.transactions
+        .filter((t) => t.is_offline === true || (typeof t.id === 'string' && t.id.startsWith('loc-')))
+        .toArray();
+
       await db.transactions.clear();
       await db.transaction_items.clear();
 
+      // Put cloud transactions
       for (const tx of transactions) {
         await db.transactions.put({
           id: tx.id,
@@ -215,6 +268,11 @@ export async function syncFromSupabase() {
             });
           }
         }
+      }
+
+      // Restore remaining offline transactions so data is never lost
+      for (const offTx of remainingOffline) {
+        await db.transactions.put(offTx);
       }
     }
 
@@ -394,6 +452,8 @@ export async function createSupabaseTransaction(txData) {
     }
   }
 
+  const cleanSubType = txData.sub_type === 'sales' ? 'sale' : (txData.sub_type || 'operational');
+
   // 1. If Supabase is connected, write to Supabase
   if (isSupabaseConfigured && supabase) {
     try {
@@ -405,7 +465,7 @@ export async function createSupabaseTransaction(txData) {
           user_id: user?.id || null,
           invoice_number: invoiceNumber,
           type: txData.type,
-          sub_type: txData.sub_type || 'operational',
+          sub_type: cleanSubType,
           category_id: txData.category_id || null,
           category_name: txData.category_name || txData.category || '',
           contact_id: txData.contact_id || null,
@@ -499,12 +559,12 @@ export async function createSupabaseTransaction(txData) {
   }
 
   // 2. Fallback / Local Dexie Execution
-  const localTxId = nanoid(12);
+  const localTxId = `loc-${nanoid(10)}`;
   await db.transactions.add({
     id: localTxId,
     invoice_number: invoiceNumber,
     type: txData.type,
-    sub_type: txData.sub_type || 'operational',
+    sub_type: cleanSubType,
     category_id: txData.category_id || null,
     category: txData.category || '',
     contact_id: txData.contact_id || null,
@@ -519,6 +579,7 @@ export async function createSupabaseTransaction(txData) {
     date: txDate,
     due_date: txData.due_date ? new Date(txData.due_date).toISOString() : null,
     notes: txData.notes || '',
+    is_offline: true,
     created_at: now.toISOString(),
   });
 
@@ -590,7 +651,9 @@ export async function createSupabaseTransaction(txData) {
  * Voids a transaction in Supabase and syncs back to keep cloud and local consistent
  */
 export async function voidSupabaseTransaction(txId, reason = '') {
-  if (!isSupabaseConfigured || !supabase || !isOnline()) return false;
+  if (!isSupabaseConfigured || !supabase || !isOnline()) {
+    throw new Error('Tidak dapat membatalkan transaksi di Supabase: perangkat sedang offline atau Supabase belum terkonfigurasi.');
+  }
 
   try {
     const now = new Date();
@@ -602,15 +665,26 @@ export async function voidSupabaseTransaction(txId, reason = '') {
       .eq('id', txId)
       .maybeSingle();
 
-    if (fetchErr || !tx) {
+    if (fetchErr) {
+      console.error('Supabase fetch transaction error before void:', {
+        message: fetchErr.message,
+        code: fetchErr.code,
+        details: fetchErr.details,
+        hint: fetchErr.hint,
+        txId,
+      });
+      throw fetchErr;
+    }
+
+    if (!tx) {
       // Transaction may only exist locally
       return false;
     }
 
     if (tx.status === 'void') return true;
 
-    // 2. Mark transaction as void in Supabase
-    const { error: updateErr } = await supabase
+    // 2. Mark transaction as void in Supabase and verify with .select()
+    const { data: updatedRows, error: updateErr } = await supabase
       .from('transactions')
       .update({
         status: 'void',
@@ -618,9 +692,31 @@ export async function voidSupabaseTransaction(txId, reason = '') {
         voided_at: now.toISOString(),
         updated_at: now.toISOString(),
       })
-      .eq('id', txId);
+      .eq('id', txId)
+      .select();
 
-    if (updateErr) throw updateErr;
+    if (updateErr) {
+      console.error('Supabase void transaction error:', {
+        message: updateErr.message,
+        code: updateErr.code,
+        details: updateErr.details,
+        hint: updateErr.hint,
+        txId,
+      });
+      throw updateErr;
+    }
+
+    if (!updatedRows || updatedRows.length === 0) {
+      const rlsErr = new Error(
+        'Gagal membatalkan transaksi: 0 baris terupdate di Supabase. Kemungkinan RLS (Row Level Security) memblokir izin UPDATE pada tabel "transactions".'
+      );
+      console.error('Supabase void transaction blocked (0 rows affected):', {
+        txId,
+        message: rlsErr.message,
+        hint: 'Jalankan skrip SQL perbaikan RLS di Supabase SQL Editor.',
+      });
+      throw rlsErr;
+    }
 
     // 3. Reverse stock for line items in Supabase
     if (Array.isArray(tx.items_snapshot)) {
@@ -695,8 +791,71 @@ export async function voidSupabaseTransaction(txId, reason = '') {
 
     return true;
   } catch (err) {
-    console.warn('Gagal void transaksi di Supabase:', err);
-    return false;
+    console.error('Gagal void transaksi di Supabase:', err);
+    throw err;
+  }
+}
+
+/**
+ * Permanently deletes a transaction and its dependent child rows from Supabase
+ */
+export async function deleteSupabaseTransaction(txId) {
+  if (!isSupabaseConfigured || !supabase || !isOnline() || !txId) {
+    throw new Error('Tidak dapat menghapus transaksi di Supabase: koneksi offline atau Supabase belum terkonfigurasi.');
+  }
+
+  try {
+    // 1. Delete dependent child records first to prevent foreign key errors (23503)
+    const { error: payErr } = await supabase
+      .from('transaction_payments')
+      .delete()
+      .eq('transaction_id', txId);
+    if (payErr) {
+      console.warn('Warning: Gagal menghapus relasi pembayaran sebelum hapus transaksi:', payErr);
+    }
+
+    const { error: movErr } = await supabase
+      .from('stock_movements')
+      .delete()
+      .eq('transaction_id', txId);
+    if (movErr) {
+      console.warn('Warning: Gagal menghapus relasi mutasi stok sebelum hapus transaksi:', movErr);
+    }
+
+    // 2. Delete parent transaction and verify with .select()
+    const { data, error } = await supabase
+      .from('transactions')
+      .delete()
+      .eq('id', txId)
+      .select();
+
+    if (error) {
+      console.error('Supabase DELETE transaction error:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        txId,
+      });
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      const rlsErr = new Error(
+        'Gagal menghapus transaksi: 0 baris terhapus di Supabase. Kemungkinan RLS (Row Level Security) memblokir izin DELETE pada tabel "transactions".'
+      );
+      console.error('Supabase DELETE transaction blocked (0 rows affected):', {
+        txId,
+        message: rlsErr.message,
+        hint: 'Jalankan skrip SQL perbaikan RLS di Supabase SQL Editor.',
+      });
+      throw rlsErr;
+    }
+
+    return true;
+  } catch (err) {
+    console.error('deleteSupabaseTransaction failed:', err);
+    throw err;
   }
 }
 
@@ -778,22 +937,198 @@ export async function updateSupabaseProduct(productId, updates) {
 }
 
 /**
- * Deletes a product in Supabase
+ * Permanently deletes a product and its dependent child rows from Supabase
  */
 export async function deleteSupabaseProduct(productId) {
-  if (!isSupabaseConfigured || !supabase || !isOnline() || !productId) return false;
+  if (!isSupabaseConfigured || !supabase || !isOnline() || !productId) {
+    throw new Error('Tidak dapat menghapus barang di Supabase: koneksi offline atau Supabase belum terkonfigurasi.');
+  }
 
   try {
-    const { error } = await supabase
+    // 1. Delete dependent child rows first (unit conversions & stock movements)
+    // to prevent PostgreSQL error 23503 (foreign_key_violation)
+    const { error: unitErr } = await supabase
+      .from('product_units')
+      .delete()
+      .eq('product_id', productId);
+    if (unitErr) {
+      console.warn('Warning: Gagal menghapus konversi satuan sebelum hapus produk:', unitErr);
+    }
+
+    const { error: movErr } = await supabase
+      .from('stock_movements')
+      .delete()
+      .eq('product_id', productId);
+    if (movErr) {
+      console.warn('Warning: Gagal menghapus riwayat mutasi sebelum hapus produk:', movErr);
+    }
+
+    // 2. Delete parent product and verify with .select()
+    const { data, error } = await supabase
       .from('products')
       .delete()
-      .eq('id', productId);
+      .eq('id', productId)
+      .select();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase DELETE products error:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        productId,
+      });
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      const rlsErr = new Error(
+        'Gagal menghapus barang: 0 baris terhapus di Supabase. Kemungkinan RLS (Row Level Security) memblokir izin DELETE pada tabel "products".'
+      );
+      console.error('Supabase DELETE products blocked (0 rows affected):', {
+        productId,
+        message: rlsErr.message,
+        hint: 'Jalankan skrip SQL perbaikan RLS di Supabase SQL Editor.',
+      });
+      throw rlsErr;
+    }
+
     return true;
   } catch (err) {
-    console.warn('Gagal hapus produk di Supabase:', err);
-    return false;
+    console.error('deleteSupabaseProduct failed:', err);
+    throw err;
+  }
+}
+
+/**
+ * Permanently deletes a contact from Supabase
+ */
+export async function deleteSupabaseContact(contactId) {
+  if (!isSupabaseConfigured || !supabase || !isOnline() || !contactId) {
+    throw new Error('Tidak dapat menghapus kontak di Supabase: koneksi offline atau Supabase belum terkonfigurasi.');
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('contacts')
+      .delete()
+      .eq('id', contactId)
+      .select();
+
+    if (error) {
+      console.error('Supabase DELETE contacts error:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        contactId,
+      });
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      const rlsErr = new Error(
+        'Gagal menghapus kontak: 0 baris terhapus di Supabase. Kemungkinan RLS (Row Level Security) memblokir izin DELETE pada tabel "contacts".'
+      );
+      console.error('Supabase DELETE contacts blocked (0 rows affected):', {
+        contactId,
+        message: rlsErr.message,
+      });
+      throw rlsErr;
+    }
+
+    return true;
+  } catch (err) {
+    console.error('deleteSupabaseContact failed:', err);
+    throw err;
+  }
+}
+
+/**
+ * Permanently deletes an account from Supabase
+ */
+export async function deleteSupabaseAccount(accountId) {
+  if (!isSupabaseConfigured || !supabase || !isOnline() || !accountId) {
+    throw new Error('Tidak dapat menghapus rekening di Supabase: koneksi offline atau Supabase belum terkonfigurasi.');
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('accounts')
+      .delete()
+      .eq('id', accountId)
+      .select();
+
+    if (error) {
+      console.error('Supabase DELETE accounts error:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        accountId,
+      });
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      const rlsErr = new Error(
+        'Gagal menghapus rekening: 0 baris terhapus di Supabase. Kemungkinan RLS (Row Level Security) memblokir izin DELETE pada tabel "accounts".'
+      );
+      console.error('Supabase DELETE accounts blocked (0 rows affected):', {
+        accountId,
+        message: rlsErr.message,
+      });
+      throw rlsErr;
+    }
+
+    return true;
+  } catch (err) {
+    console.error('deleteSupabaseAccount failed:', err);
+    throw err;
+  }
+}
+
+/**
+ * Permanently deletes a category from Supabase
+ */
+export async function deleteSupabaseCategory(categoryId) {
+  if (!isSupabaseConfigured || !supabase || !isOnline() || !categoryId) {
+    throw new Error('Tidak dapat menghapus kategori di Supabase: koneksi offline atau Supabase belum terkonfigurasi.');
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('categories')
+      .delete()
+      .eq('id', categoryId)
+      .select();
+
+    if (error) {
+      console.error('Supabase DELETE categories error:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        categoryId,
+      });
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      const rlsErr = new Error(
+        'Gagal menghapus kategori: 0 baris terhapus di Supabase. Kemungkinan RLS (Row Level Security) memblokir izin DELETE pada tabel "categories".'
+      );
+      console.error('Supabase DELETE categories blocked (0 rows affected):', {
+        categoryId,
+        message: rlsErr.message,
+      });
+      throw rlsErr;
+    }
+
+    return true;
+  } catch (err) {
+    console.error('deleteSupabaseCategory failed:', err);
+    throw err;
   }
 }
 
@@ -910,5 +1245,33 @@ export async function triggerInAppKeepAlive() {
   } catch (err) {
     // Non-blocking background keep-alive
     console.debug('Supabase keepalive ping debug:', err);
+  }
+}
+
+/**
+ * Updates primary or secondary cash account in Supabase
+ */
+export async function updateSupabaseAccount(accountId, updates) {
+  if (!isSupabaseConfigured || !supabase || !isOnline() || !accountId) return false;
+
+  try {
+    const payload = {
+      updated_at: new Date().toISOString(),
+    };
+    if (updates.name !== undefined) payload.name = String(updates.name).trim();
+    if (updates.type !== undefined) payload.type = updates.type;
+    if (updates.account_number !== undefined) payload.account_number = String(updates.account_number).trim();
+    if (updates.balance !== undefined) payload.balance = Number(updates.balance) || 0;
+
+    const { error } = await supabase
+      .from('accounts')
+      .update(payload)
+      .eq('id', accountId);
+
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.warn('Gagal update akun di Supabase:', err);
+    return false;
   }
 }

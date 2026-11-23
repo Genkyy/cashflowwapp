@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS public.stock_movements (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
-    transaction_id UUID REFERENCES public.transactions(id) ON DELETE SET NULL,
+    transaction_id UUID REFERENCES public.transactions(id) ON DELETE CASCADE,
     type VARCHAR(20) NOT NULL CHECK (type IN ('in', 'out', 'adjustment', 'void_reversal')),
     qty NUMERIC(15, 2) NOT NULL, -- Satuan dasar (positif / negatif)
     unit VARCHAR(30) NOT NULL,

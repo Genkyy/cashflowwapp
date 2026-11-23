@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from './lib/store.js';
+import { useAuthStore } from './lib/authStore.js';
 import { seedDatabase, syncStandardCatalog } from './lib/seed.js';
 import { setupRealtimeSync, syncFromSupabase, triggerInAppKeepAlive } from './lib/supabaseService.js';
 import SplashScreen from './components/layout/SplashScreen.jsx';
@@ -11,6 +12,7 @@ import TransactionsView from './components/transactions/TransactionsView.jsx';
 import StockView from './components/stock/StockView.jsx';
 import ReportsView from './components/reports/ReportsView.jsx';
 import SettingsView from './components/settings/SettingsView.jsx';
+import AuthModal from './components/auth/AuthModal.jsx';
 import { Toast } from './components/ui/Toast.jsx';
 import ErrorBoundary from './components/ui/ErrorBoundary.jsx';
 import OfflineBanner from './components/ui/OfflineBanner.jsx';
@@ -25,10 +27,14 @@ import OfflineBanner from './components/ui/OfflineBanner.jsx';
  */
 export default function App() {
   const { activeTab } = useAppStore();
+  const { isAuthModalOpen, setAuthModalOpen, initializeAuth } = useAuthStore();
   const [isSplashDone, setIsSplashDone] = useState(false);
   const hasSeededRef = useRef(false);
 
   useEffect(() => {
+    // 0. Initialize authentication state & session listeners
+    initializeAuth();
+
     // 1. Initial background pull from Supabase so HP, tablet, laptop are instantly in sync
     syncFromSupabase().catch((e) => console.warn('Sync from Supabase warning:', e));
     triggerInAppKeepAlive().catch(() => {});
@@ -44,12 +50,19 @@ export default function App() {
     // 3. Setup Supabase Realtime synchronization across HP, tablet, and laptop
     const cleanupRealtime = setupRealtimeSync();
 
+    // 4. Session expired listener (triggered by errorHandler)
+    const handleSessionExpired = () => {
+      setAuthModalOpen(true);
+    };
+    window.addEventListener('bang_andi:session_expired', handleSessionExpired);
+
     return () => {
+      window.removeEventListener('bang_andi:session_expired', handleSessionExpired);
       if (typeof cleanupRealtime === 'function') {
         cleanupRealtime();
       }
     };
-  }, []);
+  }, [initializeAuth, setAuthModalOpen]);
 
   // Mobile Banking Animated Splash Screen
   if (!isSplashDone) {
@@ -83,6 +96,9 @@ export default function App() {
 
         {/* Dynamic Alert Toast */}
         <Toast />
+
+        {/* Supabase Security & Session Authentication Modal */}
+        <AuthModal isOpen={isAuthModalOpen} onClose={() => setAuthModalOpen(false)} />
       </div>
     </ErrorBoundary>
   );

@@ -50,11 +50,7 @@ export default function StockItemModal({
 
   // Populate form on open or item change
   useEffect(() => {
-    if (!isOpen) {
-      setShowDeleteConfirm(false);
-      setErrorMessage('');
-      return;
-    }
+    if (!isOpen) return;
 
     if (item) {
       setName(item.name || '');
@@ -119,6 +115,7 @@ export default function StockItemModal({
   // Handle Form Submit
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setErrorMessage('');
 
     if (!name.trim()) {
@@ -181,7 +178,7 @@ export default function StockItemModal({
 
   // Handle Delete
   const handleDelete = async () => {
-    if (!item || !onDelete) return;
+    if (isDeleting || !item || !onDelete) return;
     setIsDeleting(true);
     try {
       await onDelete(item.id);

@@ -2,7 +2,8 @@ import { useState, useRef } from 'react';
 import { useLiveQuery } from '../../hooks/useLiveQuery.js';
 import { db } from '../../lib/db.js';
 import { useAuthStore } from '../../lib/authStore.js';
-import { syncFromSupabase, resetSupabaseDatabase } from '../../lib/supabaseService.js';
+import { useAppStore } from '../../lib/store.js';
+import { syncFromSupabase, resetSupabaseDatabase, updateSupabaseAccount } from '../../lib/supabaseService.js';
 import { formatCurrency } from '../../lib/formatters.js';
 import { exportToJSON } from '../../lib/exporters.js';
 import { resetDatabaseToReal } from '../../lib/seed.js';
@@ -39,7 +40,8 @@ import {
  * 4. Operational Notes (F5.4) & Cloud Sync
  */
 export default function SettingsView() {
-  const { isConfigured } = useAuthStore();
+  const { isConfigured, user, setAuthModalOpen } = useAuthStore();
+  const { addNotification } = useAppStore();
   const accounts = useLiveQuery(() => db.accounts.toArray(), [], []);
   const operationalNotes = useLiveQuery(() => db.operational_notes.toArray(), [], []);
 
@@ -48,6 +50,7 @@ export default function SettingsView() {
   const [activeSection, setActiveSection] = useState('overview'); // overview | cloud | accounts | notes | reset_confirm
   const [isSyncing, setIsSyncing] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [isSavingAccount, setIsSavingAccount] = useState(false);
 
   // Edit Single Account State
   const [showEditAccountModal, setShowEditAccountModal] = useState(false);
@@ -73,29 +76,53 @@ export default function SettingsView() {
 
   const handleSaveAccount = async (e) => {
     e.preventDefault();
-    const updatedData = {
-      name: editAccName.trim() || 'Kas Utama',
-      type: editAccType,
-      account_number: editAccNumber.trim(),
-      balance: Number(editAccBalance) || 0,
-      is_active: 1,
-      updated_at: new Date().toISOString(),
-    };
+    if (isSavingAccount) return;
+    setIsSavingAccount(true);
 
-    if (primaryAccount) {
-      await db.accounts.update(primaryAccount.id, updatedData);
-    } else {
-      await db.accounts.add({
-        code: 'ACC-KAS',
-        ...updatedData,
-        created_at: new Date().toISOString(),
+    try {
+      const updatedData = {
+        name: editAccName.trim() || 'Kas Utama',
+        type: editAccType,
+        account_number: editAccNumber.trim(),
+        balance: Math.round(Number(editAccBalance) || 0),
+        is_active: 1,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (primaryAccount) {
+        await db.accounts.update(primaryAccount.id, updatedData);
+        if (isConfigured) {
+          await updateSupabaseAccount(primaryAccount.id, updatedData);
+        }
+      } else {
+        const newAccId = await db.accounts.add({
+          code: 'ACC-KAS',
+          ...updatedData,
+          created_at: new Date().toISOString(),
+        });
+        if (isConfigured) {
+          await updateSupabaseAccount(newAccId, updatedData);
+        }
+      }
+
+      addNotification({
+        message: 'Informasi dan saldo kas berhasil diperbarui.',
+        type: 'success',
       });
+      setShowEditAccountModal(false);
+    } catch (err) {
+      addNotification({
+        message: translateErrorMessage(err, 'Gagal menyimpan perubahan akun kas.'),
+        type: 'error',
+      });
+    } finally {
+      setIsSavingAccount(false);
     }
-    setShowEditAccountModal(false);
   };
 
   // Database Reset Handler
   const handleConfirmReset = async () => {
+    if (isResetting) return;
     setIsResetting(true);
     try {
       // 1. Reset Supabase Cloud database jika terkonfigurasi & online
@@ -115,15 +142,21 @@ export default function SettingsView() {
       setActiveSection('overview');
 
       if (isConfigured && !cloudResetSuccess) {
-        alert(
-          'Penyimpanan lokal di perangkat Anda telah bersih (0 transaksi & 0 stok)!\n\n' +
-          'Catatan Supabase Cloud: Jika data di dashboard Supabase masih terlihat, jalankan query TRUNCATE di SQL Editor Supabase untuk membuka akses penghapusan cloud.'
-        );
+        addNotification({
+          message: 'Penyimpanan lokal di perangkat Anda telah bersih (0 transaksi & 0 stok). Catatan: Supabase Cloud memerlukan izin TRUNCATE di SQL Editor.',
+          type: 'warning',
+        });
       } else {
-        alert('Database berhasil direset bersih! Seluruh data di perangkat dan Supabase Cloud telah dikosongkan.');
+        addNotification({
+          message: 'Database berhasil direset bersih! Seluruh data di perangkat dan Supabase Cloud telah dikosongkan.',
+          type: 'success',
+        });
       }
     } catch (err) {
-      alert('Gagal mereset database: ' + err.message);
+      addNotification({
+        message: 'Gagal mereset database: ' + err.message,
+        type: 'error',
+      });
     } finally {
       setIsResetting(false);
     }
@@ -135,7 +168,7 @@ export default function SettingsView() {
   const [noteTitle, setNoteTitle] = useState('');
   const [noteCategory, setNoteCategory] = useState('Umum');
   const [notePriority, setNotePriority] = useState('medium');
-  const [noteDate, setNoteDate] = useState(new Date().toISOString().slice(0, 10));
+  const [noteDate, setNoteDate] = useState(() => new Date().toISOString().slice(0, 10));
 
   const activeNotes = (operationalNotes || []).filter((n) => !n.is_completed);
   const completedNotes = (operationalNotes || []).filter((n) => !!n.is_completed);
@@ -265,12 +298,15 @@ export default function SettingsView() {
         }
       });
 
-      alert('Berhasil memulihkan cadangan data JSON!');
-      window.location.reload();
+      addNotification({
+        message: 'Berhasil memulihkan cadangan data JSON! Memuat ulang sistem...',
+        type: 'success',
+      });
+      setTimeout(() => window.location.reload(), 800);
     } catch (err) {
       console.error('Error restore backup:', err);
       const friendly = translateErrorMessage(err, 'Gagal memulihkan cadangan data.');
-      alert(friendly);
+      addNotification({ message: friendly, type: 'error' });
     } finally {
       setIsRestoring(false);
       e.target.value = '';
@@ -423,6 +459,38 @@ export default function SettingsView() {
                   }`}
               >
                 {isConfigured ? 'Terhubung' : 'Offline'}
+              </span>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+            </div>
+          </div>
+
+          {/* Row: Akun & Sesi Supabase */}
+          <div
+            onClick={() => setAuthModalOpen(true)}
+            className="p-4 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition cursor-pointer"
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                <ShieldCheck className="w-5 h-5 text-[#00D29E]" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-[#0F172A] tracking-tight">
+                  Akun & Sesi Cloud Supabase
+                </div>
+                <div className="text-xs text-[#64748B] truncate">
+                  {user ? `Masuk sebagai: ${user.email}` : 'Masuk akun admin untuk hak akses cloud penuh'}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span
+                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${user
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-slate-100 text-slate-600 border-slate-200'
+                  }`}
+              >
+                {user ? 'Terotentikasi' : 'Masuk'}
               </span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
             </div>
@@ -728,9 +796,11 @@ export default function SettingsView() {
               variant="primary"
               size="md"
               icon={Check}
+              loading={isSavingAccount}
+              disabled={isSavingAccount}
               className="w-full sm:w-auto shadow-xs"
             >
-              Simpan Perubahan
+              {isSavingAccount ? 'Menyimpan...' : 'Simpan Perubahan'}
             </Button>
           </div>
         </form>

@@ -4,10 +4,8 @@ import { db } from '../../lib/db.js';
 import { formatCurrency, formatDate } from '../../lib/formatters.js';
 import { useAppStore } from '../../lib/store.js';
 import {
-  Wallet,
   TrendingUp,
   Package,
-  AlertTriangle,
   ArrowUpRight,
   ArrowDownLeft,
   ChevronRight,
@@ -69,7 +67,6 @@ export default function DashboardView() {
     []
   );
   const items = useLiveQuery(() => db.items.toArray(), []);
-  const batches = useLiveQuery(() => db.stock_batches.toArray(), []);
   const operationalNotes = useLiveQuery(() => db.operational_notes.toArray(), [], []);
   const capitalRotations = useLiveQuery(
     () => (db.capital_rotations ? db.capital_rotations.toArray() : []),
@@ -89,11 +86,6 @@ export default function DashboardView() {
   // 2. Calculations
   const totalBalance = (accounts || []).reduce(
     (sum, a) => sum + (Number(a.balance) || 0),
-    0
-  );
-
-  const totalStockValuation = (items || []).reduce(
-    (sum, it) => sum + (Number(it.stock) || 0) * (Number(it.hpp) || 0),
     0
   );
 
@@ -148,7 +140,7 @@ export default function DashboardView() {
       expense,
       net: income - expense,
     };
-  }, [transactions, periodFilter, currentMonth, currentYear]);
+  }, [transactions, periodFilter, currentMonth, currentYear, now]);
 
   // Backward compatible variables
   const monthlyIncome = cashflowMetrics.income;
@@ -168,14 +160,6 @@ export default function DashboardView() {
   const lowStockItems = (items || []).filter(
     (it) => Number(it.stock) <= (Number(it.min_stock) || 0)
   );
-
-  const expiringBatches = (batches || []).filter((b) => {
-    if (!b.expiry_date || b.status !== 'active') return false;
-    const diffDays = Math.ceil(
-      (new Date(b.expiry_date).getTime() - now.getTime()) / (1000 * 3600 * 24)
-    );
-    return diffDays <= 7;
-  });
 
   // Recent 5 Cash Transactions (Pure Cashflow - No Debt/Tempo)
   const recentTransactions = useMemo(() => {
@@ -204,7 +188,7 @@ export default function DashboardView() {
       return weeks;
     }
 
-    const thirtyDaysAgo = new Date();
+    const thirtyDaysAgo = new Date(now);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     thirtyDaysAgo.setHours(0, 0, 0, 0);
 
@@ -240,13 +224,13 @@ export default function DashboardView() {
     });
 
     return weeks;
-  }, [transactions, periodFilter, currentMonth, currentYear]);
+  }, [transactions, periodFilter, currentMonth, currentYear, now]);
 
   // Real Category Breakdown Data (Donut Chart)
   const categoryData = useMemo(() => {
     if (!transactions || transactions.length === 0 || monthlyExpense === 0) return [];
 
-    const thirtyDaysAgo = new Date();
+    const thirtyDaysAgo = new Date(now);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     thirtyDaysAgo.setHours(0, 0, 0, 0);
 
@@ -294,7 +278,7 @@ export default function DashboardView() {
     });
 
     return result;
-  }, [transactions, monthlyExpense, periodFilter, currentMonth, currentYear]);
+  }, [transactions, monthlyExpense, periodFilter, currentMonth, currentYear, now]);
 
   // Greeting by hour
   const greetingText = useMemo(() => {

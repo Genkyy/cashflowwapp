@@ -4,7 +4,9 @@ import { db } from '../lib/db.js';
 import { calculateMovingAverageHPP } from '../lib/hpp.js';
 import { convertToBaseUnit } from '../lib/units.js';
 import { useLiveQuery, notifyDatabaseChange } from './useLiveQuery.js';
-import { voidSupabaseTransaction } from '../lib/supabaseService.js';
+import { voidSupabaseTransaction, deleteSupabaseTransaction } from '../lib/supabaseService.js';
+import { isSupabaseConfigured } from '../lib/supabase.js';
+import { isOnline } from '../lib/errorHandler.js';
 
 export function getAllTransactionsQuery() {
   return db.transactions.orderBy('date').reverse().toArray();
@@ -230,9 +232,25 @@ export function useTransactions() {
 
   /**
    * Voids a transaction and reverses stock mutations and account balance changes
+   * Note: Confirmed in Supabase Cloud FIRST before modifying local Dexie.
+   * If cloud update is blocked or fails, no optimistic local change is made,
+   * preventing the transaction from reappearing as active after refresh.
    */
   const voidTransaction = useCallback(async (id, reason = '') => {
-    return await db.transaction(
+    const tx = await db.transactions.get(Number(id) || id);
+    if (!tx) throw new Error('Transaksi tidak ditemukan');
+    if (tx.status === 'void') throw new Error('Transaksi sudah dibatalkan sebelumnya');
+
+    // 1. If Supabase is configured, void in Supabase Cloud FIRST
+    if (isSupabaseConfigured) {
+      if (!isOnline()) {
+        throw new Error('Tidak dapat membatalkan transaksi saat offline. Koneksi internet diperlukan agar data di cloud Supabase sinkron.');
+      }
+      await voidSupabaseTransaction(id, reason);
+    }
+
+    // 2. Only after Supabase confirms update, update local Dexie
+    await db.transaction(
       'rw',
       [
         db.transactions,
@@ -244,10 +262,6 @@ export function useTransactions() {
         db.audit_log,
       ],
       async () => {
-        const tx = await db.transactions.get(Number(id) || id);
-        if (!tx) throw new Error('Transaksi tidak ditemukan');
-        if (tx.status === 'void') throw new Error('Transaksi sudah dibatalkan sebelumnya');
-
         const now = new Date();
         const txItems = await db.transaction_items.where('transaction_id').equals(tx.id).toArray();
 
@@ -364,12 +378,92 @@ export function useTransactions() {
       }
     );
 
-    // Synchronize void status with Supabase if online
-    try {
-      await voidSupabaseTransaction(id, reason);
-    } catch {
-      // Handled silently
+    return true;
+  }, []);
+
+  /**
+   * Permanently deletes a transaction and cleans up related records
+   */
+  const deleteTransaction = useCallback(async (id) => {
+    const tx = await db.transactions.get(Number(id) || id);
+    if (!tx) throw new Error('Transaksi tidak ditemukan');
+
+    // 1. If Supabase is configured, delete in Supabase Cloud FIRST
+    if (isSupabaseConfigured) {
+      if (!isOnline()) {
+        throw new Error('Tidak dapat menghapus transaksi saat offline. Koneksi internet diperlukan agar data di cloud terhapus.');
+      }
+      await deleteSupabaseTransaction(id);
     }
+
+    // 2. Only after Supabase confirms deletion, delete locally in Dexie
+    await db.transaction(
+      'rw',
+      [
+        db.transactions,
+        db.transaction_items,
+        db.stock_mutations,
+        db.items,
+        db.accounts,
+        db.installments,
+        db.audit_log,
+      ],
+      async () => {
+        const now = new Date();
+
+        // If transaction was not void, reverse stock & balance effects
+        if (tx.status !== 'void') {
+          const txItems = await db.transaction_items.where('transaction_id').equals(tx.id).toArray();
+          for (const lineItem of txItems) {
+            if (!lineItem.item_id) continue;
+            const item = await db.items.get(Number(lineItem.item_id) || lineItem.item_id);
+            if (!item) continue;
+
+            const baseQty = Number(lineItem.base_qty) || Number(lineItem.qty) || 0;
+            const currentStock = Number(item.stock) || 0;
+            let newStock = currentStock;
+
+            if (tx.type === 'income' && tx.sub_type === 'sale') {
+              newStock = currentStock + baseQty;
+            } else if (tx.type === 'expense' && tx.sub_type === 'purchase') {
+              newStock = Math.max(0, currentStock - baseQty);
+            }
+
+            await db.items.update(item.id, {
+              stock: newStock,
+              updated_at: now.toISOString(),
+            });
+          }
+
+          if (tx.account_id && Number(tx.paid_amount) > 0) {
+            const acc = await db.accounts.get(Number(tx.account_id) || tx.account_id);
+            if (acc) {
+              const delta = tx.type === 'income' ? -Number(tx.paid_amount) : Number(tx.paid_amount);
+              await db.accounts.update(acc.id, {
+                balance: (Number(acc.balance) || 0) + delta,
+                updated_at: now.toISOString(),
+              });
+            }
+          }
+        }
+
+        // Delete child rows & transaction from Dexie
+        await db.transaction_items.where('transaction_id').equals(tx.id).delete();
+        await db.installments.where('transaction_id').equals(tx.id).delete();
+        await db.transactions.delete(tx.id);
+
+        await db.audit_log.add({
+          timestamp: now.toISOString(),
+          action: 'delete_transaction',
+          entity_type: 'transaction',
+          entity_id: tx.id,
+          details: { invoice_number: tx.invoice_number },
+        });
+
+        notifyDatabaseChange();
+        return true;
+      }
+    );
 
     return true;
   }, []);
@@ -478,6 +572,7 @@ export function useTransactions() {
     transactions,
     addTransaction,
     voidTransaction,
+    deleteTransaction,
     addInstallment,
     getTransactionsByFilter,
   };

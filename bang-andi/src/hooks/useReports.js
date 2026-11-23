@@ -198,7 +198,6 @@ export function useReports() {
     const allInstallments = await db.installments.toArray();
     const allRotations = db.capital_rotations ? await db.capital_rotations.toArray() : [];
 
-    const txMap = new Map(allTx.map((t) => [t.id, t]));
     const installmentsByTx = new Map();
     for (const inst of allInstallments) {
       if (!installmentsByTx.has(inst.transaction_id)) {

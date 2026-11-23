@@ -13,7 +13,6 @@ import {
   Layers,
   BarChart3,
   Calendar,
-  Filter,
   SlidersHorizontal,
   ChevronDown,
   Check,
@@ -116,11 +115,11 @@ export default function ReportsView() {
       };
     }
     if (periodPreset === 'last_30_days') {
-      const d30 = new Date();
+      const d30 = new Date(now);
       d30.setDate(d30.getDate() - 30);
       d30.setHours(0, 0, 0, 0);
       const start = d30.toISOString();
-      const end = new Date().toISOString();
+      const end = now.toISOString();
       return {
         start,
         end,
@@ -160,7 +159,7 @@ export default function ReportsView() {
       displayRange: 'Semua Riwayat Transaksi',
       subLabel: 'Semua'
     };
-  }, [periodPreset, customStartDate, customEndDate, currentYear, currentMonth]);
+  }, [periodPreset, customStartDate, customEndDate, currentYear, currentMonth, now]);
 
   // Report Data State
   const [plData, setPlData] = useState(null);

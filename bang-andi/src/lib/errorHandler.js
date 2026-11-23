@@ -53,6 +53,9 @@ export function translateErrorMessage(error, defaultMessage = 'Terjadi kendala p
     lower.includes('session expired') ||
     lower.includes('refresh_token_not_found')
   ) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('bang_andi:session_expired'));
+    }
     return 'Sesi login Anda telah berakhir demi keamanan. Silakan masuk (login) kembali untuk melanjutkan sinkronisasi.';
   }
 

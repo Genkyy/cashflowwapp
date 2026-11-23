@@ -29,6 +29,7 @@ import {
   SlidersHorizontal,
   Check,
   ArrowDownLeft,
+  ArrowUpRight,
   ChevronDown
 } from 'lucide-react';
 import { SkeletonCard } from '../ui/Skeleton.jsx';
@@ -70,6 +71,7 @@ export default function StockView() {
   const [search, setSearch] = useState('');
   const [conditionFilter, setConditionFilter] = useState('all'); // all | warning | safe
   const [mutationPeriod, setMutationPeriod] = useState('this_month'); // this_month (Anti-Lag default) | all | last_30_days
+  const [now] = useState(() => new Date());
 
   // 3. Tambah & Ubah Barang Modal State
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
@@ -102,11 +104,20 @@ export default function StockView() {
   };
 
   const handleDeleteItem = async (itemId) => {
-    await deleteItem(itemId);
-    addNotification({
-      message: 'Barang berhasil dihapus dari inventaris stok.',
-      type: 'info',
-    });
+    try {
+      await deleteItem(itemId);
+      addNotification({
+        message: 'Barang berhasil dihapus dari inventaris stok.',
+        type: 'info',
+      });
+    } catch (err) {
+      const friendly = translateErrorMessage(err, 'Gagal menghapus data barang.');
+      addNotification({
+        message: friendly,
+        type: 'error',
+      });
+      throw err;
+    }
   };
 
   // 4. Adjustment Modal State
@@ -124,6 +135,7 @@ export default function StockView() {
 
   const handleSaveWeight = async (e) => {
     e.preventDefault();
+    if (isWeighingSubmitting) return;
     if (!weighingLivestock || !newWeight) return;
     const wNum = Number(newWeight) || 0;
     if (wNum <= 0) return;
@@ -295,9 +307,13 @@ export default function StockView() {
   // Save Adjustment
   const handleSaveAdjustment = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
     const delta = Number(adjustDelta);
     if (isNaN(delta) || delta === 0) {
-      alert('Silakan masukkan selisih jumlah penyesuaian stok (tidak boleh 0).');
+      addNotification({
+        message: 'Silakan masukkan selisih jumlah penyesuaian stok (tidak boleh 0).',
+        type: 'error',
+      });
       return;
     }
     if (!adjustingItem) return;
@@ -314,7 +330,10 @@ export default function StockView() {
       setAdjustNotes('');
     } catch (err) {
       const friendly = translateErrorMessage(err, 'Gagal menyesuaikan stok.');
-      alert(friendly);
+      addNotification({
+        message: friendly,
+        type: 'error',
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -323,11 +342,10 @@ export default function StockView() {
   // Filtered Mutations with default 'Bulan Ini' (Anti-Lag)
   const filteredMutations = useMemo(() => {
     const list = (mutations || []).slice().reverse();
-    const now = new Date();
     const curMonth = now.getMonth();
     const curYear = now.getFullYear();
 
-    const thirtyDaysAgo = new Date();
+    const thirtyDaysAgo = new Date(now);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     thirtyDaysAgo.setHours(0, 0, 0, 0);
 
@@ -357,7 +375,7 @@ export default function StockView() {
 
       return true;
     });
-  }, [mutations, mutationPeriod, mutationCommodity, items, uniqueCommodities]);
+  }, [mutations, mutationPeriod, mutationCommodity, items, uniqueCommodities, now]);
 
   // Anti-Lag Pagination: 20 items initial view, reset on period change
   const {

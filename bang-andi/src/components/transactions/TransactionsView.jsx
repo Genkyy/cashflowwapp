@@ -11,33 +11,21 @@ import {
   Plus,
   Search,
   Camera,
-  Upload,
   Image as ImageIcon,
   X,
   Trash2,
   Receipt,
   Ban,
-  DollarSign,
   ExternalLink,
   ArrowUpRight,
   ArrowDownLeft,
   ArrowLeftRight,
-  Calendar,
   AlertTriangle,
-  TrendingUp,
-  TrendingDown,
-  Sparkles,
-  Clock,
-  CheckCircle2,
-  Filter,
   SlidersHorizontal,
   RotateCcw,
-  FileText,
   Check,
-  ChevronDown,
   Layers,
   ChevronRight,
-  Eye,
   Copy,
   Wallet,
   Zap,
@@ -67,7 +55,7 @@ export default function TransactionsView() {
     setDefaultTransactionType,
     addNotification,
   } = useAppStore();
-  const { voidTransaction } = useTransactions();
+  const { voidTransaction, deleteTransaction } = useTransactions();
 
   // 1. Live Queries
   const transactions = useLiveQuery(() => db.transactions.toArray(), [], []);
@@ -105,6 +93,7 @@ export default function TransactionsView() {
   const [voidingTx, setVoidingTx] = useState(null);
   const [voidReason, setVoidReason] = useState('');
   const [isVoiding, setIsVoiding] = useState(false);
+  const [isDeletingTx, setIsDeletingTx] = useState(false);
 
   // 4. Form State (Streamlined, Fast & Stock-Safe)
   const [txType, setTxType] = useState('income'); // income | expense
@@ -220,9 +209,9 @@ export default function TransactionsView() {
     }
 
     if (field === 'qty' || field === 'unit_price' || field === 'product_id') {
-      const q = Number(item.qty) || 0;
-      const p = Number(item.unit_price) || 0;
-      item.subtotal = q * p;
+      const q = Math.max(0, Number(item.qty) || 0);
+      const p = Math.max(0, Math.round(Number(item.unit_price) || 0));
+      item.subtotal = Math.round(q * p);
     }
 
     updated[idx] = item;
@@ -253,9 +242,9 @@ export default function TransactionsView() {
   // Form total calculation
   const totalAmount = useMemo(() => {
     if (entryMode === 'quick') {
-      return Math.round(Number(quickAmount) || 0);
+      return Math.max(0, Math.round(Number(quickAmount) || 0));
     }
-    return lineItems.reduce((acc, it) => acc + (Number(it.subtotal) || 0), 0);
+    return Math.max(0, Math.round(lineItems.reduce((acc, it) => acc + (Number(it.subtotal) || 0), 0)));
   }, [entryMode, quickAmount, lineItems]);
 
   // Real-time stock validation check for commodity selling
@@ -299,16 +288,17 @@ export default function TransactionsView() {
   // Save Transaction
   const handleSaveTransaction = async (e) => {
     e.preventDefault();
+    if (isUploading) return;
     if (totalAmount <= 0) {
-      alert('Nominal transaksi harus lebih dari 0.');
+      addNotification({ message: 'Nominal transaksi harus lebih dari 0.', type: 'error' });
       return;
     }
     if (entryMode === 'stock' && hasStockError) {
-      alert(stockValidationErrors[0].message);
+      addNotification({ message: stockValidationErrors[0].message, type: 'error' });
       return;
     }
     if (entryMode === 'stock' && lineItems.some((it) => !it.product_id || Number(it.qty) <= 0)) {
-      alert('Silakan pilih komoditas dan isi kuantitas dengan benar.');
+      addNotification({ message: 'Silakan pilih komoditas dan isi kuantitas dengan benar.', type: 'error' });
       return;
     }
 
@@ -323,7 +313,7 @@ export default function TransactionsView() {
 
       const isQuick = entryMode === 'quick';
       const actualSubType = isQuick
-        ? (txType === 'income' ? 'sales' : 'operational')
+        ? (txType === 'income' ? 'sale' : 'operational')
         : (txType === 'income' ? 'sale' : 'purchase');
 
       const resolvedCategory = isQuick
@@ -367,7 +357,7 @@ export default function TransactionsView() {
       });
     } catch (err) {
       const friendly = translateErrorMessage(err, 'Gagal menyimpan transaksi. Pastikan data terisi dengan benar.');
-      alert(friendly);
+      addNotification({ message: friendly, type: 'error' });
     } finally {
       setIsUploading(false);
     }
@@ -1503,7 +1493,7 @@ export default function TransactionsView() {
                   setVoidReason('');
                 } catch (err) {
                   const friendly = translateErrorMessage(err, 'Gagal membatalkan transaksi.');
-                  alert(friendly);
+                  addNotification({ message: friendly, type: 'error' });
                 } finally {
                   setIsVoiding(false);
                 }
@@ -1821,7 +1811,33 @@ export default function TransactionsView() {
               {/* Action Buttons in Receipt */}
               <div className="space-y-2 pt-2 border-t border-slate-100">
                 <div className="flex items-center gap-2">
-                  {!isVoid && (
+                  {isVoid ? (
+                    <button
+                      type="button"
+                      disabled={isDeletingTx}
+                      onClick={async () => {
+                        if (!window.confirm(`Hapus permanen faktur ${tx.invoice_number}? Data akan dihapus selamanya dari sistem dan Supabase Cloud.`)) return;
+                        setIsDeletingTx(true);
+                        try {
+                          await deleteTransaction(tx.id);
+                          addNotification({
+                            message: `Faktur ${tx.invoice_number} berhasil dihapus permanen.`,
+                            type: 'info',
+                          });
+                          setSelectedTxDetail(null);
+                        } catch (err) {
+                          const friendly = translateErrorMessage(err, 'Gagal menghapus transaksi.');
+                          addNotification({ message: friendly, type: 'error' });
+                        } finally {
+                          setIsDeletingTx(false);
+                        }
+                      }}
+                      className="flex-1 py-2.5 rounded-2xl bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-600 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{isDeletingTx ? 'Menghapus...' : 'Hapus Permanen'}</span>
+                    </button>
+                  ) : (
                     <button
                       type="button"
                       onClick={() => {

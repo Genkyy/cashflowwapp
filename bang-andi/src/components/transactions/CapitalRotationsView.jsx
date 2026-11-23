@@ -72,7 +72,7 @@ export default function CapitalRotationsView() {
   // 3. Form State
   const [projectName, setProjectName] = useState('');
   const [commodity, setCommodity] = useState('Susu MBG');
-  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [capitalAmount, setCapitalAmount] = useState('');
   const [profitAmount, setProfitAmount] = useState('');
   const [roiPercentage, setRoiPercentage] = useState(8.0);
@@ -235,9 +235,10 @@ export default function CapitalRotationsView() {
   // Submit Rotation Form
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isUploading) return;
     const capNum = Number(capitalAmount) || 0;
     if (capNum <= 0) {
-      alert('Mohon masukkan nominal modal yang valid (> 0)');
+      addNotification({ message: 'Mohon masukkan nominal modal yang valid (> 0)', type: 'error' });
       return;
     }
 
@@ -274,7 +275,7 @@ export default function CapitalRotationsView() {
       setShowAddModal(false);
     } catch (err) {
       console.error('Error saving rotation project:', err);
-      alert('Terjadi kesalahan saat menyimpan data proyek.');
+      addNotification({ message: 'Terjadi kesalahan saat menyimpan data proyek.', type: 'error' });
     } finally {
       setIsUploading(false);
     }
@@ -286,13 +287,13 @@ export default function CapitalRotationsView() {
     setIsConfirmingDone(true);
     try {
       await markAsDone(cairModalItem.id, cairDate);
-      addNotification?.({
+      addNotification({
         message: `Proyek "${cairModalItem.project_name}" berhasil dicairkan.`,
         type: 'success',
       });
       setCairModalItem(null);
     } catch (err) {
-      alert(translateErrorMessage(err, 'Gagal mencairkan proyek.'));
+      addNotification({ message: translateErrorMessage(err, 'Gagal mencairkan proyek.'), type: 'error' });
     } finally {
       setIsConfirmingDone(false);
     }
@@ -304,14 +305,14 @@ export default function CapitalRotationsView() {
     setIsConfirmingCancel(true);
     try {
       await markAsCancel(cancelModalItem.id, cancelReason);
-      addNotification?.({
+      addNotification({
         message: `Proyek "${cancelModalItem.project_name}" dibatalkan.`,
         type: 'info',
       });
       setCancelModalItem(null);
       setCancelReason('');
     } catch (err) {
-      alert(translateErrorMessage(err, 'Gagal membatalkan proyek.'));
+      addNotification({ message: translateErrorMessage(err, 'Gagal membatalkan proyek.'), type: 'error' });
     } finally {
       setIsConfirmingCancel(false);
     }
@@ -524,7 +525,6 @@ export default function CapitalRotationsView() {
           {paginatedRotations.map((item) => {
             const isWaiting = item.status === 'waiting';
             const isDone = item.status === 'done';
-            const isCancel = item.status === 'cancel';
 
             return (
               <div
